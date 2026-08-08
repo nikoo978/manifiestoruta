@@ -40,8 +40,8 @@ function projectOnSegment(p:Point,a:Point,b:Point):Point{
   return {lat:ay+t*dy,lon:(ax+t*dx)/k};
 }
 
-async function overpassWays(anchor:Point) {
-  const query=`[out:json][timeout:8];way(around:500,${anchor.lat},${anchor.lon})["highway"]["name"];out tags geom;`;
+async function overpassWays(anchor:Point, radius=500) {
+  const query=`[out:json][timeout:10];way(around:${radius},${anchor.lat},${anchor.lon})["highway"]["name"];out tags geom;`;
   for(const endpoint of ["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"]){
     const data=await fetchJson(endpoint,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"},body:new URLSearchParams({data:query})},12000);
     if(data?.elements?.length) return data.elements;
@@ -58,12 +58,88 @@ async function parallelFallback(street:string,height:number,locationKey:string):
   const target=(targetWays.map((w:any)=>({w,s:nearestSegment(w,anchor)})).filter((x:any)=>x.s).sort((a:any,b:any)=>a.s.d-b.s.d)[0]); if(!target) return null;
   const targetAngle=bearing(target.s.a,target.s.b);
   const candidates=ways.map((w:any)=>({w,s:nearestSegment(w,anchor)})).filter((x:any)=>x.s&&normalizeText(x.w.tags?.name??"")!==targetNorm&&x.s.d<420&&angleDiff(targetAngle,bearing(x.s.a,x.s.b))<0.28).sort((a:any,b:any)=>a.s.d-b.s.d).slice(0,8);
-  for(const c of candidates){const name=String(c.w.tags?.name??"");const match=bestStreetMatch(name,locationKey);const queryName=match?.street.name??name;const p=await georef(`${queryName} ${height}`,locationKey);if(!p)continue;const proj=nearestSegment(target.w,p);if(proj&&proj.d<650)return{point:proj.q,reason:`Altura ${height} estimada con la calle paralela ${name} y proyectada sobre ${street}.`};}
+  for(const c of candidates){const name=String(c.w.tags?.name??"");const match=bestStreetMatch(name,locationKey);const queryName=match?.street?.name??name;const p=await georef(`${queryName} ${height}`,locationKey);if(!p)continue;const proj=nearestSegment(target.w,p);if(proj&&proj.d<650)return{point:proj.q,reason:`Altura ${height} estimada con la calle paralela ${name} y proyectada sobre ${street}.`};}
+  return null;
+}
+
+
+function canonicalWayName(name:string, locationKey:string) {
+  const match=bestStreetMatch(name,locationKey);
+  return normalizeText(match?.street && match.score>=0.52 ? match.street.name : name);
+}
+
+function geometryPoints(way:any):Point[]{
+  return (way?.geometry??[]).map((point:any)=>({lat:Number(point.lat),lon:Number(point.lon)})).filter((point:Point)=>Number.isFinite(point.lat)&&Number.isFinite(point.lon));
+}
+
+function intersectWays(aWays:any[],bWays:any[]):Point|null{
+  let best:{point:Point;d:number}|null=null;
+  for(const aWay of aWays){
+    const aPoints=geometryPoints(aWay);
+    for(const bWay of bWays){
+      const bPoints=geometryPoints(bWay);
+      for(const a of aPoints){
+        for(const b of bPoints){
+          const d=distance(a,b);
+          if(d<=18&&(!best||d<best.d)) best={point:{lat:(a.lat+b.lat)/2,lon:(a.lon+b.lon)/2},d};
+        }
+      }
+    }
+  }
+  return best?.point??null;
+}
+
+async function crossPoint(mainStreet:string,crossStreet:string,locationKey:string):Promise<Point|null>{
+  const anchors=await photon(crossStreet,locationKey,3);
+  const mainNorm=normalizeText(mainStreet);
+  const crossNorm=normalizeText(crossStreet);
+  for(const anchor of anchors){
+    const ways=await overpassWays(anchor,2200);
+    if(!ways.length) continue;
+    const mainWays=ways.filter((way:any)=>{
+      const raw=String(way.tags?.name??"");
+      const canonical=canonicalWayName(raw,locationKey);
+      return canonical===mainNorm || canonical.includes(mainNorm) || mainNorm.includes(canonical);
+    });
+    if(!mainWays.length) continue;
+    const crossWays=ways.filter((way:any)=>{
+      const raw=String(way.tags?.name??"");
+      const canonical=canonicalWayName(raw,locationKey);
+      return canonical===crossNorm || canonical.includes(crossNorm) || crossNorm.includes(canonical);
+    });
+    const intersection=intersectWays(mainWays,crossWays);
+    if(intersection) return intersection;
+
+    // Some OSM ways use a slightly different name. Project the cross-street
+    // search point onto the requested main street as a bounded approximation.
+    const projected=mainWays.map((way:any)=>nearestSegment(way,anchor)).filter(Boolean).sort((a:any,b:any)=>a.d-b.d)[0];
+    if(projected&&projected.d<1200) return projected.q;
+  }
+  return null;
+}
+
+async function betweenFallback(mainStreet:string,between:string[],locationKey:string):Promise<{point:Point;reason:string}|null>{
+  if(between.length!==2) return null;
+  const first=await crossPoint(mainStreet,between[0],locationKey);
+  const second=await crossPoint(mainStreet,between[1],locationKey);
+  if(first&&second){
+    return {point:{lat:(first.lat+second.lat)/2,lon:(first.lon+second.lon)/2},reason:`Punto medio de ${mainStreet} entre ${between[0]} y ${between[1]}.`};
+  }
+  if(first||second){
+    const point=first??second!;
+    const reference=first?between[0]:between[1];
+    return {point,reason:`Se ubicó ${mainStreet} en el cruce con ${reference}; no se pudo resolver con precisión la segunda entrecalle.`};
+  }
   return null;
 }
 
 async function resolveOne(raw:string,locationKey:string):Promise<Result>{
-  const loc=locationByKey(locationKey); const analysis=analyzeCatalogAddress(raw,locationKey); const base=analysis.correctedAddress.replace(/\s+entre\s+.+$/i,"");
+  const loc=locationByKey(locationKey); const analysis=analyzeCatalogAddress(raw,locationKey);
+  if(analysis.between.length===2){
+    const between=await betweenFallback(analysis.mainStreet,analysis.between,locationKey);
+    if(between) return {...between.point,precision:"street",source:"overpass",reason:between.reason,normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections};
+  }
+  const base=analysis.correctedAddress.replace(/\s+entre\s+.+$/i,"");
   const exact=await georef(base,locationKey); if(exact) return {...exact,precision:"exact",source:"georef",reason:"Domicilio localizado por Georef Argentina.",normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections};
   const hits=await photon(base,locationKey,5); const hit=hits[0];
   if(hit && analysis.height){ const label=normalizeText(`${hit.street} ${hit.name}`); if(label.includes(String(analysis.height))) return {lat:hit.lat,lon:hit.lon,precision:"exact",source:"photon",reason:"Domicilio localizado por Photon/OpenStreetMap.",normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections}; }

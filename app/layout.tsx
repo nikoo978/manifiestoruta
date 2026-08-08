@@ -1,24 +1,21 @@
 import type { Metadata, Viewport } from "next";
 import { PwaRegister } from "./pwa-register";
 import "./globals.css";
+import "./ruta/ruta.css";
 
 export const metadata: Metadata = {
-  title: "Suite Manifiestos",
-  description: "Lectura OCR de manifiestos y planificación de rutas postales.",
+  title: "Ruta Postal · Suite Manifiestos",
+  description: "Ruta Envíos con direcciones libres, PDF sin OCR, imágenes con OCR y geocodificación por localidad.",
   applicationName: "Suite Manifiestos",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Suite Manifiestos",
+    title: "Ruta Postal · Suite Manifiestos",
   },
   formatDetection: { telephone: false },
   icons: {
-    icon: [
-      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
-      { url: "/icons/icon-512.png", type: "image/png", sizes: "512x512" },
-    ],
-    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    icon: [{ url: "/icons/icon.svg", type: "image/svg+xml" }],
   },
 };
 
@@ -26,7 +23,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#f3f0e8",
+  themeColor: "#f4f7f2",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -1,208 +1,654 @@
 "use client";
 
-import Image from "next/image";
-import { ChangeEvent, DragEvent, useMemo, useRef, useState } from "react";
-import { InstallPwa } from "./pwa-controls";
-import { buildRouteTransfer, ROUTE_TRANSFER_KEY } from "@/lib/route-transfer";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { analyzeCatalogAddress } from "@/lib/street-catalog";
+import { inferLocation, locationByKey, SUPPORTED_LOCATIONS } from "@/lib/supported-locations";
+import { parseManifestPdf } from "@/lib/manifest-pdf";
+import { parseManualAddresses } from "@/lib/manual-address";
+import {
+  buildRouteTransfer,
+  LEGACY_ROUTE_TRANSFER_KEY,
+  normalizeRouteTransferPayload,
+  ROUTE_TRANSFER_KEY,
+  type RouteTransferPayload,
+} from "@/lib/route-transfer";
 
-type RowState = "verified" | "review";
-type ManifestRow = {
-  id: string; page: number; rowNumber: number; name: string; address: string;
-  locality: string; postalCode: string; barcode: string; confidence: number;
-  status: RowState; note?: string;
-};
-type ScanResult = { manifestNumber: string; pages: number; rows: ManifestRow[]; persisted?: boolean };
-type Upload = { id: string; file: File; preview: string };
+ type Status = "pending" | "delivered" | "failed";
+ type Precision = "exact" | "parallel" | "street" | "missing";
 
-const places = [
-  ["Ascensión", "6003"], ["Junín", "6000"], ["Ferré", "6027"],
-  ["Baigorrita", "6013"], ["Los Toldos", "6015"], ["General Viamonte", "6015"],
-] as const;
+ type Stop = {
+  id: string;
+  loadOrder: number;
+  packageNo: number;
+  name: string;
+  rawAddress: string;
+  address: string;
+  locality: string;
+  postalCode: string;
+  locationKey: string;
+  status: Status;
+  lat?: number;
+  lon?: number;
+  precision?: Precision;
+  reason?: string;
+  corrections?: Array<{ original: string; corrected: string; score: number }>;
+  sourceManifest?: string;
+  sourceRowId?: string;
+ };
 
-const demo: ScanResult = {
-  manifestNumber: "360529110236", pages: 1, persisted: false,
-  rows: [
-    { id: "d1", page: 1, rowNumber: 1, name: "ANA PÉREZ", address: "SAN MARTÍN 248", locality: "FERRÉ", postalCode: "6027", barcode: "SOPQ2705MLAR00001234EX", confidence: 99, status: "verified" },
-    { id: "d2", page: 1, rowNumber: 2, name: "MARCOS GIMÉNEZ", address: "ALMIRANTE BROWN 155", locality: "ASCENSIÓN", postalCode: "6003", barcode: "SOPQ2705MLAR00005678EX", confidence: 97, status: "verified" },
-    { id: "d3", page: 1, rowNumber: 3, name: "SOFÍA ROLDÁN", address: "SARMIENTO 71", locality: "JUNÍN", postalCode: "6000", barcode: "F5PQ2605DR00009123", confidence: 84, status: "review", note: "Confirmar la altura en la imagen." },
-  ],
-};
+ type GeoResult = {
+  lat?: number;
+  lon?: number;
+  precision: Precision;
+  source: string;
+  reason: string;
+  normalizedAddress: string;
+  locality: string;
+  corrections?: Stop["corrections"];
+ };
 
-const stages = ["Alineando la hoja", "Separando filas", "Leyendo campos", "Validando calles", "Comparando lecturas"];
-const acceptedImage = /image\/(jpeg|png|webp|heic|heif)/;
+ type OcrRow = {
+  id: string;
+  page: number;
+  rowNumber: number;
+  name: string;
+  address: string;
+  locality: string;
+  postalCode: string;
+  barcode: string;
+  confidence: number;
+  status: "verified" | "review";
+  note?: string;
+ };
 
-function esc(value: string | number) { return `"${String(value).replaceAll('"', '""')}"`; }
-function exportCsv(result: ScanResult) {
-  const head = ["pagina", "numero", "nombre", "direccion", "localidad", "cp", "barcode", "confianza", "estado"];
-  const lines = result.rows.map(row => [row.page, row.rowNumber, row.name, row.address, row.locality, row.postalCode, row.barcode, row.confidence, row.status].map(esc).join(","));
-  const url = URL.createObjectURL(new Blob([`\uFEFF${head.join(",")}\n${lines.join("\n")}`], { type: "text/csv;charset=utf-8" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `manifiesto-${result.manifestNumber || "ocr"}.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
+ type OcrResult = {
+  manifestNumber: string;
+  pages: number;
+  rows: OcrRow[];
+  persisted?: boolean;
+ };
 
-export default function Home() {
-  const cameraPicker = useRef<HTMLInputElement>(null);
-  const galleryPicker = useRef<HTMLInputElement>(null);
-  const [uploads, setUploads] = useState<Upload[]>([]);
+ const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+
+ const STORAGE = "ruta-postal:v3";
+ const LEGACY_STORAGES = ["ruta-postal:v2", "ruta-postal:v1"];
+
+ function distance(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  const y = (a.lat - b.lat) * 111;
+  const x = (a.lon - b.lon) * 111 * Math.cos(a.lat * Math.PI / 180);
+  return Math.hypot(x, y);
+ }
+
+ function optimize(stops: Stop[], origin?: { lat: number; lon: number }) {
+  const mapped = stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
+  if (mapped.length < 2) return mapped;
+  let current = origin ?? { lat: mapped[0].lat!, lon: mapped[0].lon! };
+  const rest = [...mapped];
+  const route: Stop[] = [];
+
+  while (rest.length) {
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    rest.forEach((stop, index) => {
+      const candidate = distance(current, { lat: stop.lat!, lon: stop.lon! });
+      if (candidate < bestDistance) {
+        bestDistance = candidate;
+        bestIndex = index;
+      }
+    });
+    const [next] = rest.splice(bestIndex, 1);
+    route.push(next);
+    current = { lat: next.lat!, lon: next.lon! };
+  }
+
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 1; i < route.length - 2; i++) {
+      for (let j = i + 1; j < route.length - 1; j++) {
+        const a = { lat: route[i - 1].lat!, lon: route[i - 1].lon! };
+        const b = { lat: route[i].lat!, lon: route[i].lon! };
+        const c = { lat: route[j].lat!, lon: route[j].lon! };
+        const d = { lat: route[j + 1].lat!, lon: route[j + 1].lon! };
+        if (distance(a, c) + distance(b, d) + 0.05 < distance(a, b) + distance(c, d)) {
+          const reversed = route.slice(i, j + 1).reverse();
+          route.splice(i, reversed.length, ...reversed);
+        }
+      }
+    }
+  }
+  return route;
+ }
+
+ function csv(value: string | number | undefined) {
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+ }
+
+ function parseDelimitedLine(line: string) {
+  const delimiter = line.includes("\t") ? "\t" : line.includes(";") ? ";" : "|";
+  const values: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') { current += '"'; index++; }
+      else quoted = !quoted;
+    } else if (char === delimiter && !quoted) {
+      values.push(current.trim());
+      current = "";
+    } else current += char;
+  }
+  values.push(current.trim());
+  return values;
+ }
+
+ function bulkRows(text: string) {
+  return text.split(/\n+/).map((line) => line.trim()).filter(Boolean).flatMap((line, index) => {
+    const columns = parseDelimitedLine(line);
+    if (columns.length < 5) return [];
+    if (index === 0 && /paquete|n[º°o]/i.test(columns[0]) && /nombre/i.test(columns[1])) return [];
+    const [packageText, name, address, locality, postalCode] = columns;
+    if (!address) return [];
+    const inferred = inferLocation(locality, postalCode);
+    return [{
+      packageNo: Number(packageText.replace(/\D/g, "")) || index + 1,
+      name: name.trim(),
+      address: address.trim(),
+      locality: locality.trim() || inferred.label,
+      postalCode: postalCode.replace(/\D/g, "").slice(0, 4) || inferred.postalCode,
+      locationKey: inferred.key,
+    }];
+  });
+ }
+
+ function migrateStored(value: unknown): Stop[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw, index) => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    const locationKey = String(item.locationKey ?? inferLocation(String(item.locality ?? ""), String(item.postalCode ?? "")).key);
+    const location = locationByKey(locationKey);
+    const address = String(item.address ?? item.rawAddress ?? "").trim();
+    if (!address) return [];
+    return [{
+      id: String(item.id ?? crypto.randomUUID()),
+      loadOrder: Number(item.loadOrder ?? index + 1),
+      packageNo: Number(item.packageNo ?? index + 1),
+      name: String(item.name ?? item.recipient ?? "").trim(),
+      rawAddress: String(item.rawAddress ?? address),
+      address,
+      locality: String(item.locality ?? location.label),
+      postalCode: String(item.postalCode ?? location.postalCode),
+      locationKey,
+      status: (["pending", "delivered", "failed"].includes(String(item.status)) ? item.status : "pending") as Status,
+      lat: Number.isFinite(Number(item.lat)) ? Number(item.lat) : undefined,
+      lon: Number.isFinite(Number(item.lon)) ? Number(item.lon) : undefined,
+      precision: item.precision as Precision | undefined,
+      reason: item.reason ? String(item.reason) : undefined,
+      corrections: Array.isArray(item.corrections) ? item.corrections as Stop["corrections"] : undefined,
+      sourceManifest: item.sourceManifest ? String(item.sourceManifest) : undefined,
+      sourceRowId: item.sourceRowId ? String(item.sourceRowId) : undefined,
+    }];
+  });
+ }
+
+ function transferToStops(payload: RouteTransferPayload, existing: Stop[]) {
+  const known = new Set(existing.filter((stop) => stop.sourceManifest && stop.sourceRowId).map((stop) => `${stop.sourceManifest}|${stop.sourceRowId}`));
+  const start = Math.max(0, ...existing.map((stop) => stop.loadOrder));
+  return payload.rows
+    .filter((row) => !known.has(`${payload.manifestNumber}|${row.sourceRowId}`))
+    .map((row, index) => {
+      const analysis = analyzeCatalogAddress(row.address, row.locationKey);
+      return {
+        id: crypto.randomUUID(),
+        loadOrder: start + index + 1,
+        packageNo: row.packageNo,
+        name: row.name,
+        rawAddress: row.address,
+        address: analysis.correctedAddress,
+        locality: row.locality || locationByKey(row.locationKey).label,
+        postalCode: row.postalCode || locationByKey(row.locationKey).postalCode,
+        locationKey: row.locationKey,
+        status: "pending" as Status,
+        corrections: analysis.corrections,
+        sourceManifest: payload.manifestNumber,
+        sourceRowId: row.sourceRowId,
+      } satisfies Stop;
+    });
+ }
+
+ function MapView({ stops, origin }: { stops: Stop[]; origin?: { lat: number; lon: number } }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let map: any;
+    let cancelled = false;
+    void (async () => {
+      if (!ref.current) return;
+      if (!document.querySelector("link[data-leaflet-css]")) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
+        link.dataset.leafletCss = "true";
+        document.head.appendChild(link);
+      }
+      const importExternal = new Function("url", "return import(url)") as (url: string) => Promise<any>;
+      const L = await importExternal("https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet-src.esm.js");
+      if (cancelled || !ref.current) return;
+      map = L.map(ref.current, { zoomControl: true });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap contributors", maxZoom: 19 }).addTo(map);
+      const points: [number, number][] = [];
+      stops.forEach((stop, index) => {
+        if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) return;
+        const approximate = stop.precision !== "exact";
+        const icon = L.divIcon({
+          className: "route-marker-wrap",
+          html: `<div class="route-marker ${approximate ? "approx" : ""}"><span>${index + 1}</span></div>`,
+          iconSize: [34, 34], iconAnchor: [17, 17],
+        });
+        L.marker([stop.lat!, stop.lon!], { icon }).addTo(map).bindPopup(`<strong>${index + 1}. ${stop.address}</strong><br>${stop.name || "Sin nombre"}<br>Paquete ${stop.packageNo}`);
+        points.push([stop.lat!, stop.lon!]);
+      });
+      if (origin) {
+        L.circleMarker([origin.lat, origin.lon], { radius: 8 }).addTo(map).bindPopup("Inicio");
+        points.push([origin.lat, origin.lon]);
+      }
+      const mapped = stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
+      if (mapped.length > 1) L.polyline(mapped.map((stop) => [stop.lat!, stop.lon!] as [number, number]), { weight: 4, opacity: 0.6 }).addTo(map);
+      if (points.length) map.fitBounds(points, { padding: [34, 34], maxZoom: 15 });
+      else map.setView([-34.59, -60.95], 12);
+    })();
+    return () => { cancelled = true; map?.remove(); };
+  }, [stops, origin]);
+  return <div className="map" ref={ref} />;
+ }
+
+ export default function RutaPostalHome() {
+  const imagePicker = useRef<HTMLInputElement>(null);
+  const universalPicker = useRef<HTMLInputElement>(null);
+  const [stops, setStops] = useState<Stop[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+  const [text, setText] = useState("");
+  const [manualLocationKey, setManualLocationKey] = useState("junin-6000");
   const [dragging, setDragging] = useState(false);
-  const [mode, setMode] = useState<"maximum" | "fast">("maximum");
   const [busy, setBusy] = useState(false);
-  const [stage, setStage] = useState(0);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState<ScanResult | null>(null);
-  const [filter, setFilter] = useState<"all" | RowState>("all");
+  const [origin, setOrigin] = useState<{ lat: number; lon: number }>();
+  const [activeLocationKey, setActiveLocationKey] = useState("");
+  const [message, setMessage] = useState("");
 
-  const rows = useMemo(() => !result || filter === "all" ? result?.rows ?? [] : result.rows.filter(row => row.status === filter), [filter, result]);
-  const verified = result?.rows.filter(row => row.status === "verified").length ?? 0;
-  const review = result?.rows.filter(row => row.status === "review").length ?? 0;
+  useEffect(() => {
+    try {
+      let raw = localStorage.getItem(STORAGE);
+      if (!raw) for (const key of LEGACY_STORAGES) { raw = localStorage.getItem(key); if (raw) break; }
+      if (raw) setStops(migrateStored(JSON.parse(raw)));
+    } catch {
+      setMessage("No se pudo recuperar la ruta guardada.");
+    } finally { setHydrated(true); }
+  }, []);
 
-  function addFiles(list: File[]) {
-    const supported = list.filter(file => acceptedImage.test(file.type));
-    if (!supported.length) {
-      setError("Usá imágenes JPG, PNG, WEBP, HEIC o HEIF.");
+  useEffect(() => {
+    if (!hydrated) return;
+    try { localStorage.setItem(STORAGE, JSON.stringify(stops)); } catch { /* memoria solamente */ }
+  }, [hydrated, stops]);
+
+  const localityGroups = useMemo(() => {
+    const map = new Map<string, Stop[]>();
+    for (const stop of [...stops].sort((a, b) => a.loadOrder - b.loadOrder)) {
+      const group = map.get(stop.locationKey) ?? [];
+      group.push(stop);
+      map.set(stop.locationKey, group);
+    }
+    return [...map.entries()].map(([key, rows]) => ({ key, location: locationByKey(key), rows }));
+  }, [stops]);
+
+  useEffect(() => {
+    if (!localityGroups.length) { setActiveLocationKey(""); return; }
+    if (!localityGroups.some((group) => group.key === activeLocationKey)) setActiveLocationKey(localityGroups[0].key);
+  }, [localityGroups, activeLocationKey]);
+
+  async function geocode(list: Stop[]) {
+    const pending = list.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
+    if (!pending.length) return;
+    setBusy(true);
+    setMessage(`Ubicando ${pending.length} dirección${pending.length === 1 ? "" : "es"} de ${locationByKey(pending[0].locationKey).label}…`);
+    try {
+      const response = await fetch("/api/geocode", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ direcciones: pending.map((stop) => ({ direccion: stop.address, locationKey: stop.locationKey })) }),
+      });
+      if (!response.ok) throw new Error("No respondió el servicio de geocodificación.");
+      const data = await response.json() as { results: GeoResult[] };
+      const byId = new Map(pending.map((stop, index) => [stop.id, data.results[index]]));
+      setStops((previous) => previous.map((stop) => {
+        const geo = byId.get(stop.id);
+        return geo ? { ...stop, address: geo.normalizedAddress || stop.address, lat: geo.lat, lon: geo.lon, precision: geo.precision, reason: geo.reason, corrections: geo.corrections } : stop;
+      }));
+      setMessage(`${locationByKey(pending[0].locationKey).label}: ubicación terminada.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron ubicar las direcciones.");
+    } finally { setBusy(false); }
+  }
+
+  async function activateLocation(key: string, rows?: Stop[]) {
+    setActiveLocationKey(key);
+    const list = rows ?? stops.filter((stop) => stop.locationKey === key);
+    await geocode(list);
+  }
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const raw = localStorage.getItem(ROUTE_TRANSFER_KEY) ?? localStorage.getItem(LEGACY_ROUTE_TRANSFER_KEY);
+      if (!raw) return;
+      const parsed = normalizeRouteTransferPayload(JSON.parse(raw));
+      localStorage.removeItem(ROUTE_TRANSFER_KEY);
+      localStorage.removeItem(LEGACY_ROUTE_TRANSFER_KEY);
+      if (!parsed) { setMessage("La transferencia del OCR no tenía un formato válido."); return; }
+      const created = transferToStops(parsed, stops);
+      if (!created.length) { setMessage(`El manifiesto ${parsed.manifestNumber || "sin número"} ya estaba incorporado.`); return; }
+      setStops((previous) => [...previous, ...created]);
+      const firstKey = created[0].locationKey;
+      setActiveLocationKey(firstKey);
+      setMessage(`${created.length} envíos importados desde OCR. ${new Set(created.map((row) => row.locationKey)).size} localidad(es) detectadas.`);
+      void geocode(created.filter((row) => row.locationKey === firstKey));
+    } catch {
+      localStorage.removeItem(ROUTE_TRANSFER_KEY);
+      localStorage.removeItem(LEGACY_ROUTE_TRANSFER_KEY);
+      setMessage("No se pudo importar el manifiesto enviado por OCR.");
+    }
+    // Una transferencia por carga de la aplicación.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
+
+  async function importRows(created: Stop[], sourceLabel: string) {
+    if (!created.length) return;
+    setStops((previous) => [...previous, ...created]);
+    const firstKey = created[0].locationKey;
+    setActiveLocationKey(firstKey);
+    const groups = new Set(created.map((row) => row.locationKey)).size;
+    setMessage(`${created.length} envíos cargados desde ${sourceLabel}. ${groups} localidad${groups === 1 ? "" : "es"}; sólo se carga el primer mapa.`);
+    await geocode(created.filter((row) => row.locationKey === firstKey));
+  }
+
+  async function addManual() {
+    const tableRows = bulkRows(text);
+    const freeRows = tableRows.length ? [] : parseManualAddresses(text, manualLocationKey);
+    if (!tableRows.length && !freeRows.length) {
+      setMessage("No se reconocieron direcciones. Escribí una por línea, por ejemplo: Rivadavia 40 Junín; también podés usar 'Arias entre Cabrera y Quintana Junín'.");
       return;
     }
-    setUploads(current => {
-      const valid = supported.slice(0, Math.max(0, 8 - current.length));
-      return [...current, ...valid.map(file => ({ id: crypto.randomUUID(), file, preview: URL.createObjectURL(file) }))];
+    const start = Math.max(0, ...stops.map((stop) => stop.loadOrder));
+    const sourceRows = tableRows.length
+      ? tableRows
+      : freeRows.map((row, index) => ({ ...row, packageNo: start + index + 1, name: "" }));
+    const created = sourceRows.map((row, index) => {
+      const analysis = analyzeCatalogAddress(row.address, row.locationKey);
+      return {
+        id: crypto.randomUUID(), loadOrder: start + index + 1, packageNo: row.packageNo || start + index + 1, name: row.name,
+        rawAddress: row.address, address: analysis.correctedAddress, locality: row.locality, postalCode: row.postalCode,
+        locationKey: row.locationKey, status: "pending" as Status, corrections: analysis.corrections,
+      } satisfies Stop;
     });
-    setResult(null);
-    setError("");
+    setText("");
+    await importRows(created, tableRows.length ? "tabla pegada" : "direcciones manuales");
   }
 
-  function chosen(event: ChangeEvent<HTMLInputElement>) {
-    addFiles(Array.from(event.target.files ?? []));
-    event.target.value = "";
-  }
-  function dropped(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setDragging(false);
-    addFiles(Array.from(event.dataTransfer.files));
-  }
-  function remove(id: string) {
-    setUploads(current => current.filter(item => {
-      if (item.id === id) URL.revokeObjectURL(item.preview);
-      return item.id !== id;
-    }));
-  }
-
-  async function scan() {
-    if (!uploads.length) return;
+  async function importPdf(file?: File) {
+    if (!file) return;
     setBusy(true);
-    setError("");
-    setStage(0);
-    const ticker = window.setInterval(() => setStage(current => (current + 1) % stages.length), 1800);
-    const form = new FormData();
-    uploads.forEach(upload => form.append("images", upload.file, upload.file.name));
-    form.append("mode", mode);
+    setMessage("Leyendo manifiesto PDF y normalizando sus columnas…");
     try {
+      const parsed = await parseManifestPdf(file);
+      const start = Math.max(0, ...stops.map((stop) => stop.loadOrder));
+      const created = parsed.rows.map((row, index) => {
+        const analysis = analyzeCatalogAddress(row.address, row.locationKey);
+        return {
+          id: crypto.randomUUID(), loadOrder: start + index + 1, packageNo: row.packageNo, name: row.name,
+          rawAddress: row.address, address: analysis.correctedAddress, locality: row.locality, postalCode: row.postalCode,
+          locationKey: row.locationKey, status: "pending" as Status, corrections: analysis.corrections,
+          sourceManifest: parsed.manifestNumber, sourceRowId: `${row.packageNo}:${row.sourceCode ?? row.name}:${row.address}`,
+        } satisfies Stop;
+      });
+      if (!created.length) {
+        const diagnostic = parsed.diagnostics ? ` Texto: ${parsed.diagnostics.textItems} bloques; localidades detectadas: ${parsed.diagnostics.localityMarkers}; estrategia: ${parsed.diagnostics.strategy}.` : "";
+        throw new Error(`${parsed.warnings.join(" ") || "No se pudieron reconstruir envíos desde el PDF."}${diagnostic}`);
+      }
+      await importRows(created, parsed.manifestNumber ? `PDF · manifiesto ${parsed.manifestNumber}` : "PDF");
+      if (parsed.warnings.length) setMessage((current) => `${current} ${parsed.warnings.join(" ")}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo leer el PDF.");
+    } finally { setBusy(false); }
+  }
+
+  async function importImages(files: File[]) {
+    const images = files.filter((file) => ACCEPTED_IMAGE_TYPES.has(file.type)).slice(0, 8);
+    if (!images.length) {
+      setMessage("Seleccioná imágenes JPG, PNG, WEBP, HEIC o HEIF.");
+      return;
+    }
+    const totalBytes = images.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > 24 * 1024 * 1024) {
+      setMessage("Las imágenes superan el máximo total de 24 MB.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage(`Leyendo ${images.length} imagen${images.length === 1 ? "" : "es"} con OCR y preparando la ruta…`);
+    try {
+      const form = new FormData();
+      images.forEach((file) => form.append("images", file, file.name));
+      form.append("mode", "maximum");
       const response = await fetch("/api/scan", { method: "POST", body: form });
       const contentType = response.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) {
-        const body = await response.text();
-        const detail = body.trim().startsWith("<") || body.includes("FUNCTION_INVOCATION_TIMEOUT")
-          ? "La lectura excedió el tiempo del servidor. Probá el modo rápido."
-          : body.trim();
-        throw new Error(detail || "Respuesta inválida del servidor.");
+      if (!contentType.includes("application/json")) throw new Error("El servicio OCR devolvió una respuesta inválida.");
+      const result = await response.json() as OcrResult & { error?: string };
+      if (!response.ok) throw new Error(result.error || "No se pudo procesar el manifiesto con OCR.");
+      if (!result.rows.length) throw new Error("El OCR no encontró filas de envío en las imágenes.");
+
+      const payload = buildRouteTransfer(result);
+      const created = transferToStops(payload, stops);
+      if (!created.length) {
+        setMessage(`El manifiesto ${result.manifestNumber || "sin número"} ya estaba incorporado.`);
+        return;
       }
-      const data = await response.json() as ScanResult & { error?: string };
-      if (!response.ok) throw new Error(data.error || "No se pudo procesar el manifiesto.");
-      setResult(data);
-      setFilter("all");
-      window.setTimeout(() => document.querySelector("#results")?.scrollIntoView({ behavior: "smooth" }), 60);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Error inesperado.");
+      const reviewCount = result.rows.filter((row) => row.status === "review").length;
+      await importRows(created, result.manifestNumber ? `imágenes OCR · manifiesto ${result.manifestNumber}` : "imágenes OCR");
+      if (reviewCount) {
+        setMessage((current) => `${current} ${reviewCount} fila${reviewCount === 1 ? " quedó" : "s quedaron"} con advertencias de lectura; revisá nombre/dirección en la tabla antes de repartir.`);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron leer las imágenes.");
     } finally {
-      window.clearInterval(ticker);
       setBusy(false);
+      if (imagePicker.current) imagePicker.current.value = "";
     }
   }
 
-  function edit(id: string, field: keyof ManifestRow, value: string) {
-    setResult(current => current ? { ...current, rows: current.rows.map(row => row.id === id ? { ...row, [field]: value, status: "verified" as RowState } : row) } : null);
-  }
-  async function copy() {
-    if (result) await navigator.clipboard.writeText(result.rows.map(row => `${row.rowNumber}\t${row.name}\t${row.address}\t${row.locality}\t${row.postalCode}`).join("\n"));
+
+  async function importFiles(files: File[]) {
+    const usable = files.filter((file) => file.type === "application/pdf" || ACCEPTED_IMAGE_TYPES.has(file.type));
+    if (!usable.length) {
+      setMessage("Arrastrá un PDF o imágenes JPG, PNG, WEBP, HEIC o HEIF.");
+      return;
+    }
+    const pdfs = usable.filter((file) => file.type === "application/pdf");
+    const images = usable.filter((file) => ACCEPTED_IMAGE_TYPES.has(file.type));
+    if (pdfs.length && images.length) {
+      setMessage("Para evitar mezclar procesos, cargá el PDF o las imágenes en una operación separada.");
+      return;
+    }
+    if (pdfs.length) {
+      await importPdf(pdfs[0]);
+      return;
+    }
+    await importImages(images);
   }
 
-  function sendToRoute() {
-    if (!result || review > 0) return;
-    localStorage.setItem(ROUTE_TRANSFER_KEY, JSON.stringify(buildRouteTransfer(result)));
-    window.location.href = "/ruta?source=ocr";
+  async function editStop(stop: Stop) {
+    const packageText = prompt("Nº de paquete", String(stop.packageNo));
+    if (packageText === null) return;
+    const name = prompt("Nombre", stop.name) ?? stop.name;
+    const address = prompt("Dirección", stop.rawAddress || stop.address) ?? stop.rawAddress;
+    const locality = prompt("Localidad", stop.locality) ?? stop.locality;
+    const postalCode = prompt("CP", stop.postalCode) ?? stop.postalCode;
+    const inferred = inferLocation(locality, postalCode);
+    const analysis = analyzeCatalogAddress(address.trim(), inferred.key);
+    const edited: Stop = {
+      ...stop, packageNo: Number(packageText.replace(/\D/g, "")) || stop.packageNo, name: name.trim(), rawAddress: address.trim(),
+      address: analysis.correctedAddress, locality: locality.trim() || inferred.label, postalCode: postalCode.replace(/\D/g, "").slice(0, 4) || inferred.postalCode,
+      locationKey: inferred.key, lat: undefined, lon: undefined, precision: undefined, reason: undefined, corrections: analysis.corrections,
+    };
+    setStops((previous) => previous.map((item) => item.id === stop.id ? edited : item));
+    setActiveLocationKey(edited.locationKey);
+    await geocode([edited]);
   }
 
-  return <main>
-    <header className="topbar">
-      <a className="brand" href="#top" aria-label="Ir al inicio"><span className="brandmark"><i/><i/><i/></span><span>MANIFIESTO <b>OCR</b></span></a>
-      <div className="top-actions"><a className="suite-link" href="/ruta">Ruta Postal →</a><span className="online"><i/> Catálogo oficial activo</span><InstallPwa /></div>
+  function locate() {
+    navigator.geolocation?.getCurrentPosition(
+      (position) => setOrigin({ lat: position.coords.latitude, lon: position.coords.longitude }),
+      () => setMessage("No se pudo acceder a tu ubicación."),
+      { enableHighAccuracy: true, timeout: 10_000 },
+    );
+  }
+
+  const activeGroup = localityGroups.find((group) => group.key === activeLocationKey);
+  const activeStops = activeGroup?.rows ?? [];
+  const activeMapped = activeStops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
+  const activeMissing = activeStops.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
+  const optimized = useMemo(() => optimize(activeStops, origin), [activeStops, origin]);
+  const display = [...optimized, ...activeMissing];
+  const waitingCount = stops.length - activeStops.length;
+
+  function exportRoute() {
+    const rows = [["Nº de paquete", "Nombre", "Dirección", "Localidad", "CP", "Parada", "Estado", "Precisión", "Lat", "Lon"].map(csv).join(";")];
+    for (const group of localityGroups) {
+      const ordered = optimize(group.rows, origin);
+      const missing = group.rows.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
+      [...ordered, ...missing].forEach((stop, index) => rows.push([
+        stop.packageNo, stop.name, stop.address, stop.locality, stop.postalCode,
+        Number.isFinite(stop.lat) ? index + 1 : "", stop.status, stop.precision, stop.lat, stop.lon,
+      ].map(csv).join(";")));
+    }
+    const blob = new Blob(["\ufeff" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = "ruta-postal.csv";
+    anchor.click();
+    URL.revokeObjectURL(anchor.href);
+  }
+
+  const nextGroup = localityGroups.find((group) => group.key !== activeLocationKey && group.rows.some((row) => row.status === "pending"));
+
+  return <main className="ruta-postal">
+    <nav className="suite-nav" aria-label="Herramientas">
+      <strong>Ruta Envíos</strong>
+      <span>Direcciones libres · PDF sin OCR · Imágenes con OCR automático</span>
+    </nav>
+
+    <header>
+      <div>
+        <p className="eyebrow">RUTA ENVÍOS · FLUJO PRINCIPAL</p>
+        <h1>Direcciones listas para repartir.</h1>
+        <p>Escribí direcciones libremente, arrastrá un PDF o cargá imágenes del manifiesto. Se conserva el flujo original de Ruta Envíos y se suman OCR, PDF y mapas separados por localidad.</p>
+      </div>
+      <button className="icon-btn" onClick={locate} title="Usar mi ubicación" aria-label="Usar mi ubicación"><span aria-hidden="true">⌖</span></button>
     </header>
 
-    <section className="hero" id="top">
-      <p className="kicker"><span>01</span> Lectura por filas</p>
-      <div className="hero-grid">
-        <div>
-          <h1>De una foto inclinada a una planilla confiable.</h1>
-          <p className="lead">Lee el número de la izquierda, mantiene nombre y domicilio en la misma fila y valida cada calle sin reemplazar silenciosamente el texto original.</p>
-          <div className="proof"><span><b>3×</b> controles</span><span><b>6</b> localidades</span><span><b>0</b> errores silenciosos</span></div>
-        </div>
-        <aside className="row-card">
-          <small>BLOQUEO HORIZONTAL</small>
-          <div className="row-example"><em>07</em><i/><p><b>VALENTINA ROJAS</b><span>JOSÉ HERNÁNDEZ 236</span><small>6003 · ASCENSIÓN</small></p></div>
-          <p>Primero delimita el renglón. Después extrae sus campos.</p>
-        </aside>
+    <section className="format-strip" aria-label="Formato de datos">
+      <span>Nº de paquete</span><span>Nombre</span><span>Dirección</span><span>Localidad</span><span>CP</span>
+    </section>
+
+    <section className="stats">
+      <div><b>{stops.length}</b><span>envíos totales</span></div>
+      <div><b>{activeStops.length}</b><span>{activeGroup ? `en ${activeGroup.location.label}` : "localidad activa"}</span></div>
+      <div><b>{waitingCount}</b><span>en espera</span></div>
+    </section>
+
+    <section className="panel locality-panel">
+      <div className="panel-head"><div><h2>Localidades</h2><span>Sólo la localidad activa aparece en el mapa. Las demás quedan en espera.</span></div></div>
+      <div className="locality-queue">
+        {localityGroups.map((group, index) => {
+          const active = group.key === activeLocationKey;
+          const mappedCount = group.rows.filter((row) => Number.isFinite(row.lat) && Number.isFinite(row.lon)).length;
+          return <button key={group.key} className={`locality-card ${active ? "active" : ""}`} disabled={busy && !active} onClick={() => void activateLocation(group.key)}>
+            <span className="queue-index">{String(index + 1).padStart(2, "0")}</span>
+            <span><b>{group.location.label}</b><small>{group.rows.length} envíos · CP {group.location.postalCode}</small></span>
+            <em>{active ? "Mapa activo" : mappedCount === group.rows.length && mappedCount > 0 ? "Listo · en espera" : "En espera"}</em>
+          </button>;
+        })}
+        {!localityGroups.length && <p className="queue-empty">Las localidades aparecerán acá cuando cargues envíos.</p>}
       </div>
     </section>
 
-    <section className="scanner">
-      <div className="heading"><div><p className="kicker"><span>02</span> Cargar manifiesto</p><h2>Escaneá o elegí tus fotos</h2></div><button type="button" className="link" onClick={() => { setResult(demo); setFilter("all"); }}>Ver resultado de ejemplo →</button></div>
-      <div className="scan-grid">
-        <div className="upload-panel">
-          <input ref={cameraPicker} className="hidden" type="file" accept="image/*" capture="environment" aria-label="Tomar una foto con la cámara trasera" onChange={chosen}/>
-          <input ref={galleryPicker} className="hidden" type="file" accept="image/*" multiple aria-label="Elegir imágenes de la galería" onChange={chosen}/>
-          <div className={`dropzone ${dragging ? "drag" : ""}`} onDragEnter={event => { event.preventDefault(); setDragging(true); }} onDragOver={event => event.preventDefault()} onDragLeave={() => setDragging(false)} onDrop={dropped}>
-            {!uploads.length ? <div className="empty-upload">
-              <span className="camera" aria-hidden="true"><i/></span>
-              <b>Cargá las páginas del manifiesto</b>
-              <span className="empty-copy">Usá la cámara o buscá fotos existentes sin salir de la app.</span>
-              <div className="capture-actions">
-                <button type="button" className="capture-button camera-button" onClick={() => cameraPicker.current?.click()}><span aria-hidden="true">◉</span><b>Tomar foto</b><small>Cámara trasera</small></button>
-                <button type="button" className="capture-button gallery-button" onClick={() => galleryPicker.current?.click()}><span aria-hidden="true">▧</span><b>Elegir de Fotos</b><small>Una o varias</small></button>
-              </div>
-              <small className="desktop-drop">En computadora también podés arrastrarlas acá</small>
-              <small className="photo-tip">Consejo: hoja completa, buena luz y cuatro bordes visibles.</small>
-            </div> : <div className="uploads-area">
-              <div className="uploads-toolbar"><p><b>{uploads.length} {uploads.length === 1 ? "página" : "páginas"}</b><span>Máximo 8 por lectura</span></p><div><button type="button" onClick={() => cameraPicker.current?.click()}>◉ Cámara</button><button type="button" onClick={() => galleryPicker.current?.click()}>▧ Fotos</button></div></div>
-              <div className="uploads">
-                {uploads.map((upload, index) => <figure key={upload.id}><Image src={upload.preview} alt={`Vista previa de la página ${index + 1}`} fill sizes="(max-width: 650px) 46vw, 160px" unoptimized/><figcaption>PÁG. {index + 1}</figcaption><button type="button" aria-label={`Quitar página ${index + 1}`} onClick={() => remove(upload.id)}>×</button></figure>)}
-                {uploads.length < 8 && <button type="button" className="add" onClick={() => galleryPicker.current?.click()}><b>+</b>Nueva página</button>}
-              </div>
-            </div>}
-          </div>
-          <div aria-live="polite">{error && <p className="error"><b>!</b>{error}</p>}</div>
-          <div className="mode"><p><b>Modo de lectura</b><span>Velocidad o máxima verificación.</span></p><div><button type="button" className={mode === "fast" ? "active" : ""} onClick={() => setMode("fast")}>Rápido</button><button type="button" className={mode === "maximum" ? "active" : ""} onClick={() => setMode("maximum")}>Precisión máxima</button></div></div>
-          <button type="button" className="primary desktop-process" disabled={!uploads.length || busy} onClick={scan} aria-busy={busy}>{busy ? <><i className="spin"/>{stages[stage]}</> : <>Procesar manifiesto <span>→</span></>}</button>
+    <section className="grid">
+      <div className="panel input-panel">
+        <h2>Cargar direcciones</h2>
+        <div className="manual-location">
+          <label htmlFor="manual-location">Localidad por defecto</label>
+          <select id="manual-location" value={manualLocationKey} onChange={(event) => setManualLocationKey(event.target.value)}>
+            {SUPPORTED_LOCATIONS.filter((location) => location.locality).map((location) => <option value={location.key} key={location.key}>{location.label} · CP {location.postalCode}</option>)}
+          </select>
         </div>
-        <aside className="method">
-          <p className="method-title"><small>MÉTODO ANTI-ERROR</small><b>03 controles antes de aprobar</b></p>
-          <ol><li><span>1</span><p><b>Geometría de fila</b><small>Ubica el número y encierra sólo su renglón.</small></p></li><li><span>2</span><p><b>Doble lectura independiente</b><small>Las páginas se comparan en paralelo.</small></p></li><li><span>3</span><p><b>Dirección oficial</b><small>Valida sin modificar la altura leída.</small></p></li></ol>
-          <div className="places"><small>LOCALIDADES CONTROLADAS</small><p>{places.map(([name, cp]) => <i key={name}>{name} <b>{cp}</b></i>)}</p></div>
-          <p className="privacy">◇ Las fotos no se guardan por defecto. Sólo el resultado confirmado.</p>
-        </aside>
+        <p className="helper top">Escribí como hablás: una dirección por línea. Si indicás la localidad dentro de la línea, se detecta sola. También sigue aceptando la tabla de cinco columnas de los manifiestos.</p>
+        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={'Rivadavia 40 Junín\nSalta 32 Junín\nArias entre Cabrera y Quintana Junín\nSan Martín 248 Ferré'} />
+        <button className="primary manual-submit" disabled={busy || !text.trim()} onClick={addManual}><span aria-hidden="true">⌖</span> Ubicar direcciones</button>
+
+        <div
+          className={`drop-zone ${dragging ? "dragging" : ""}`}
+          onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+          onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDragging(true); }}
+          onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
+          onDrop={(event) => { event.preventDefault(); setDragging(false); void importFiles(Array.from(event.dataTransfer.files)); }}
+          onClick={() => !busy && universalPicker.current?.click()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !busy) universalPicker.current?.click(); }}
+        >
+          <strong>Arrastrá un PDF o imágenes acá</strong>
+          <span>PDF: lectura directa sin OCR · Imágenes: OCR automático</span>
+        </div>
+        <input ref={universalPicker} type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => { void importFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
+
+        <div className="actions file-actions">
+          <label className="button"><span aria-hidden="true">↑</span> Elegir PDF<input type="file" accept="application/pdf" hidden disabled={busy} onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>
+          <button className="button ocr-button" type="button" disabled={busy} onClick={() => imagePicker.current?.click()}><span aria-hidden="true">◎</span> Elegir imágenes (OCR)</button>
+          <input ref={imagePicker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
+        </div>
+        {message && <p className="message" aria-live="polite">{message}</p>}
+        <p className="helper"><b>Entrada manual:</b> no exige Nº de paquete, nombre ni CP. <b>PDF:</b> usa la capa de texto y no consume OCR. <b>Imágenes:</b> usan OCR. En todos los casos se corrige la calle, se respetan expresiones como <b>“Arias entre Cabrera y Quintana”</b> y se procesa una localidad por vez.</p>
+      </div>
+
+      <div className="panel map-panel">
+        <div className="panel-head">
+          <div><h2>{activeGroup ? `Mapa · ${activeGroup.location.label}` : "Mapa"}</h2><span>{activeGroup ? `${activeMapped.length} ubicadas · ${activeMissing.length} pendientes` : "Cargá envíos para iniciar"}</span></div>
+          {nextGroup && <button className="button next-location" disabled={busy} onClick={() => void activateLocation(nextGroup.key)}>Siguiente: {nextGroup.location.label} →</button>}
+        </div>
+        <MapView stops={optimized} origin={origin} />
       </div>
     </section>
 
-    {uploads.length > 0 && !result && <div className="mobile-actionbar"><p><b>{uploads.length} {uploads.length === 1 ? "página lista" : "páginas listas"}</b><span>{mode === "maximum" ? "Precisión máxima" : "Modo rápido"}</span></p><button type="button" disabled={busy} onClick={scan} aria-busy={busy}>{busy ? <><i className="spin"/>{stages[stage]}</> : <>Procesar <span>→</span></>}</button></div>}
+    <section className="panel route-panel">
+      <div className="panel-head">
+        <div><h2>{activeGroup ? `Envíos · ${activeGroup.location.label}` : "Envíos"}</h2><span>La numeración grande indica el orden sugerido de reparto dentro de esta localidad.</span></div>
+        <div className="actions compact">
+          <button className="button" onClick={exportRoute}><span aria-hidden="true">↓</span> CSV</button>
+          <button className="button danger" onClick={() => { if (confirm("¿Borrar todos los envíos y mapas?")) setStops([]); }}><span aria-hidden="true">×</span> Limpiar</button>
+        </div>
+      </div>
+      <div className="data-head"><span>Parada</span><span>Nº paquete</span><span>Nombre</span><span>Dirección</span><span>Localidad</span><span>CP</span><span>Estado</span></div>
+      <div className="stops">
+        {display.map((stop, index) => <article className={`stop stop-v2 ${stop.precision && stop.precision !== "exact" ? "approx" : ""}`} key={stop.id}>
+          <div className="number"><strong>{Number.isFinite(stop.lat) ? index + 1 : "!"}</strong></div>
+          <div className="package-cell"><small>Nº paquete</small><b>{stop.packageNo}</b></div>
+          <div className="person-cell"><small>Nombre</small><b>{stop.name || "—"}</b></div>
+          <div className="address-cell"><small>Dirección</small><b>{stop.address}</b>{stop.reason && <span className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</span>}</div>
+          <div className="location-cell"><small>Localidad</small><b>{stop.locality || locationByKey(stop.locationKey).label}</b></div>
+          <div className="cp-cell"><small>CP</small><b>{stop.postalCode}</b></div>
+          <div className="status-cell"><small>Estado</small><select value={stop.status} onChange={(event) => setStops((previous) => previous.map((item) => item.id === stop.id ? { ...item, status: event.target.value as Status } : item))}><option value="pending">Pendiente</option><option value="delivered">Entregado</option><option value="failed">No entregado</option></select><button onClick={() => void editStop(stop)}>Editar</button></div>
+        </article>)}
+        {!display.length && <div className="empty">Todavía no hay envíos para esta localidad. Escribí direcciones, arrastrá un PDF o cargá imágenes del manifiesto.</div>}
+      </div>
+    </section>
 
-    {result && <section className="results" id="results">
-      <div className="results-head"><div><p className="kicker"><span>03</span> Revisar y exportar</p><h2>Manifiesto Nº {result.manifestNumber}</h2><small>{result.pages} pág. · {result.rows.length} filas</small></div><div><button type="button" onClick={copy}>Copiar tabla</button><button type="button" className="dark" onClick={() => exportCsv(result)}>Exportar CSV ↓</button></div></div>
-      <div className="summary"><p className="score"><b>{Math.round(verified / Math.max(result.rows.length, 1) * 100)}%</b><span>confirmado</span></p><p><i className="ok">✓</i><b>{verified}</b><span>verificadas</span></p><p><i className="warn">!</i><b>{review}</b><span>para revisar</span></p><nav aria-label="Filtrar filas"><button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>Todas</button><button type="button" className={filter === "review" ? "active" : ""} onClick={() => setFilter("review")}>Revisar</button><button type="button" className={filter === "verified" ? "active" : ""} onClick={() => setFilter("verified")}>Verificadas</button></nav></div>
-      <div className="table-wrap"><table><thead><tr><th>Nº</th><th>Nombre</th><th>Dirección</th><th>Localidad</th><th>CP</th><th>Confianza</th><th>Estado</th></tr></thead><tbody>{rows.map(row => <tr key={row.id} className={row.status === "review" ? "review" : ""}><td data-label="Fila"><b className="number">{String(row.rowNumber).padStart(2, "0")}</b></td><td data-label="Nombre"><input aria-label={`Nombre de la fila ${row.rowNumber}`} value={row.name} onChange={event => edit(row.id, "name", event.target.value.toUpperCase())}/></td><td data-label="Dirección"><input aria-label={`Dirección de la fila ${row.rowNumber}`} value={row.address} onChange={event => edit(row.id, "address", event.target.value.toUpperCase())}/>{row.note && <small className="note">{row.note}</small>}</td><td data-label="Localidad"><input aria-label={`Localidad de la fila ${row.rowNumber}`} value={row.locality} onChange={event => edit(row.id, "locality", event.target.value.toUpperCase())}/></td><td data-label="CP"><input aria-label={`Código postal de la fila ${row.rowNumber}`} className="cp" inputMode="numeric" value={row.postalCode} onChange={event => edit(row.id, "postalCode", event.target.value.replace(/\D/g, "").slice(0, 4))}/></td><td data-label="Confianza"><span className={`confidence ${row.confidence < 90 ? "low" : ""}`}>{row.confidence}%</span></td><td data-label="Estado"><button type="button" className={`pill ${row.status}`} onClick={() => setResult(current => current ? { ...current, rows: current.rows.map(item => item.id === row.id ? { ...item, status: item.status === "verified" ? "review" : "verified" } : item) } : null)}>{row.status === "verified" ? "✓ Verificada" : "! Revisar"}</button></td></tr>)}</tbody></table></div>
-      <div className="results-foot"><span>{review > 0 ? "Revisá toda fila marcada antes de enviarla a la ruta." : "Manifiesto verificado: ya puede pasar al módulo de reparto."}</span><button type="button" className="primary compact" disabled={review > 0} onClick={sendToRoute}>Enviar a Ruta Postal →</button></div>
-    </section>}
-
-    <footer><span><i className="brandmark small"><i/><i/><i/></i> MANIFIESTO OCR</span><p>Toda fila dudosa requiere confirmación humana.</p></footer>
+    <footer>Ruta Envíos · Suite Manifiestos · entrada libre, PDF, OCR y mapas separados por localidad · Georef Argentina + OpenStreetMap.</footer>
   </main>;
-}
+ }

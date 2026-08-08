@@ -42,7 +42,10 @@ const MANUAL_ALIASES: Record<string, string> = {
   "BORGES": "CNEL BORGES",
   "GENERAL PAZ": "GRAL PAZ",
   "GRAL PAZ": "GRAL PAZ",
-  "RIVADAVIA": "AV RIVADAVIA"
+  "RIVADAVIA": "AV RIVADAVIA",
+  "ARIAS": "AV J L ARIAS",
+  "J L ARIAS": "AV J L ARIAS",
+  "JOSE LUIS ARIAS": "AV J L ARIAS"
 };
 
 export function normalizeText(value: string) {
@@ -111,21 +114,30 @@ export function bestStreetMatch(input: string, locationKey: string) {
   const normalized = normalizeText(input);
   const loc = locationByKey(locationKey);
   const alias = MANUAL_ALIASES[normalized] ?? MANUAL_ALIASES[normalized.replace(/^AV /, "")];
-  const filtered = alias
+  const aliasMatches = alias
     ? candidates.filter((r) => normalizeText(r.name) === normalizeText(alias))
-    : candidates;
-  let best = filtered[0];
+    : [];
+  // Manual aliases are deliberate canonical mappings. If the mapped street
+  // exists in this locality, treat it as an exact match instead of penalizing
+  // abbreviated input such as "Arias" -> "AV J L ARIAS".
+  if (aliasMatches.length) return { street: aliasMatches[0], score: 1 };
+  // An alias can be valid in one locality but absent in another (for example,
+  // RIVADAVIA is AV RIVADAVIA in Junín but CALLE RIVADAVIA elsewhere).
+  // Never return a match object without an actual street. Fall back to the
+  // locality catalog when the alias-specific candidate does not exist.
+  const pool = candidates;
+  let best = pool[0];
   let score = -1;
-  for (const row of filtered) {
+  for (const row of pool) {
     let s = similarity(normalized, row.name);
     if (loc.locality === "Los Toldos" && normalized === "BALBN" && /BALBIN/.test(normalizeText(row.name))) s = 0.96;
     if (s > score) { score = s; best = row; }
   }
-  return { street: best, score };
+  return best ? { street: best, score } : null;
 }
 
 function splitBetween(input: string) {
-  const m = input.match(/\s+(?:ENTRE|E\/|E\.)\s+(.+?)\s+(?:Y|\/|-)\s+(.+)$/i);
+  const m = input.match(/\s+(?:ENTRE|E\/|E\.)\s+(.+?)\s+(?:Y|E|\/|-)\s+(.+)$/i);
   if (!m) return { main: input.trim(), refs: [] as string[] };
   return { main: input.slice(0, m.index).trim(), refs: [m[1].trim(), m[2].trim()] };
 }
@@ -140,14 +152,14 @@ export function analyzeCatalogAddress(input: string, locationKey: string): Addre
   const corrections: AddressAnalysis["corrections"] = [];
   let mainStreet = streetInput;
   let matched = false;
-  if (mainMatch && (mainMatch.score >= 0.72 || normalizeText(mainMatch.street.name) === normalizeText(streetInput))) {
+  if (mainMatch?.street && (mainMatch.score >= 0.72 || normalizeText(mainMatch.street.name) === normalizeText(streetInput))) {
     mainStreet = mainMatch.street.name;
     matched = true;
     if (normalizeText(streetInput) !== normalizeText(mainStreet)) corrections.push({ original: streetInput, corrected: mainStreet, score: mainMatch.score });
   }
   const correctedRefs = refs.map((ref) => {
     const match = bestStreetMatch(ref, locationKey);
-    if (match && match.score >= 0.68) {
+    if (match?.street && match.score >= 0.68) {
       if (normalizeText(ref) !== normalizeText(match.street.name)) corrections.push({ original: ref, corrected: match.street.name, score: match.score });
       return match.street.name;
     }
