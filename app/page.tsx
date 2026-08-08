@@ -604,56 +604,36 @@ import {
   const coordinateStop = coordinateStopId ? stops.find((stop) => stop.id === coordinateStopId) : undefined;
 
   return <main className="ruta-postal">
-    <nav className="suite-nav" aria-label="Herramientas">
-      <strong>Ruta Envíos</strong>
+    <nav className="app-bar" aria-label="Ruta Envíos">
+      <div className="brand-lockup">
+        <span className="brand-mark" aria-hidden="true">R</span>
+        <span><strong>Ruta Envíos</strong><small>Planificador de reparto</small></span>
+      </div>
       <div className="top-actions">
         <InstallPwa />
-        <button className="button danger clear-top" type="button" disabled={!stops.length} onClick={clearAll}><span aria-hidden="true">×</span> Limpiar</button>
+        <button className="icon-action" type="button" onClick={locate} title="Usar mi ubicación" aria-label="Usar mi ubicación">⌖</button>
+        <button className="clear-action" type="button" disabled={!stops.length} onClick={clearAll}>Limpiar</button>
       </div>
     </nav>
 
-    <header className="app-header">
-      <div>
-        <h1>Planificar reparto</h1>
-        <p>Direcciones, PDF o imágenes.</p>
-      </div>
-      <button className="icon-btn" onClick={locate} title="Usar mi ubicación" aria-label="Usar mi ubicación"><span aria-hidden="true">⌖</span></button>
-    </header>
+    <section className="workspace">
+      <section className="panel input-panel" id="cargar">
+        <div className="section-title">
+          <div><span className="section-kicker">NUEVA RUTA</span><h1>Cargar paradas</h1></div>
+          <b className="route-count">{stops.length}</b>
+        </div>
 
-    <section className="stats">
-      <div><b>{stops.length}</b><span>envíos totales</span></div>
-      <div><b>{activeStops.length}</b><span>{activeGroup ? `en ${activeGroup.location.label}` : "localidad activa"}</span></div>
-      <div><b>{waitingCount}</b><span>en espera</span></div>
-    </section>
-
-    <section className="panel locality-panel">
-      <div className="panel-head"><div><h2>Localidades</h2><span>Una localidad por mapa.</span></div></div>
-      <div className="locality-queue">
-        {localityGroups.map((group, index) => {
-          const active = group.key === activeLocationKey;
-          const mappedCount = group.rows.filter((row) => Number.isFinite(row.lat) && Number.isFinite(row.lon)).length;
-          return <button key={group.key} className={`locality-card ${active ? "active" : ""}`} disabled={busy && !active} onClick={() => void activateLocation(group.key)}>
-            <span className="queue-index">{String(index + 1).padStart(2, "0")}</span>
-            <span><b>{group.location.label}</b><small>{group.rows.length} envíos · CP {group.location.postalCode}</small></span>
-            <em>{active ? "Mapa activo" : mappedCount === group.rows.length && mappedCount > 0 ? "Listo · en espera" : "En espera"}</em>
-          </button>;
-        })}
-        {!localityGroups.length && <p className="queue-empty">Las localidades aparecerán acá cuando cargues envíos.</p>}
-      </div>
-    </section>
-
-    <section className="grid">
-      <div className="panel input-panel">
-        <h2>Cargar direcciones</h2>
         <div className="manual-location">
           <label htmlFor="manual-location">Localidad por defecto</label>
           <select id="manual-location" value={manualLocationKey} onChange={(event) => setManualLocationKey(event.target.value)}>
-            {SUPPORTED_LOCATIONS.filter((location) => location.locality).map((location) => <option value={location.key} key={location.key}>{location.label} · CP {location.postalCode}</option>)}
+            {SUPPORTED_LOCATIONS.filter((location) => location.locality).map((location) => <option value={location.key} key={location.key}>{location.label} · {location.postalCode}</option>)}
           </select>
         </div>
-        <p className="helper top">Una dirección por línea. La localidad dentro de la línea es opcional.</p>
-        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={'Rivadavia 40 Junín\nSalta 32 Junín\nArias entre Cabrera y Quintana Junín\nSan Martín 248 Ferré'} />
-        <button className="primary manual-submit" disabled={busy || !text.trim()} onClick={addManual}><span aria-hidden="true">⌖</span> Ubicar direcciones</button>
+
+        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={'Rivadavia 40 Junín\nSalta 32 Junín\nArias entre Cabrera y Quintana Junín'} />
+        <button className="primary manual-submit" disabled={busy || !text.trim()} onClick={addManual}>Ubicar direcciones</button>
+
+        <div className="separator"><span>o</span></div>
 
         <div
           className={`drop-zone ${dragging ? "dragging" : ""}`}
@@ -666,48 +646,71 @@ import {
           tabIndex={0}
           onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !busy) universalPicker.current?.click(); }}
         >
-          <strong>Soltá PDF o imágenes</strong>
-          <span>o tocá para elegir archivos</span>
+          <span className="drop-icon" aria-hidden="true">＋</span>
+          <strong>Soltá archivos acá</strong>
+          <small>PDF o imágenes</small>
         </div>
         <input ref={universalPicker} type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => { void importFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
 
-        <div className="actions file-actions">
-          <label className="button"><span aria-hidden="true">↑</span> PDF<input type="file" accept="application/pdf" hidden disabled={busy} onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>
-          <button className="button ocr-button" type="button" disabled={busy} onClick={() => imagePicker.current?.click()}><span aria-hidden="true">◎</span> Imágenes</button>
+        <div className="file-actions">
+          <label className="secondary-action">PDF<input type="file" accept="application/pdf" hidden disabled={busy} onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>
+          <button className="secondary-action" type="button" disabled={busy} onClick={() => imagePicker.current?.click()}>Imágenes</button>
           <input ref={imagePicker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
         </div>
         {message && <p className="message" aria-live="polite">{message}</p>}
-      </div>
+      </section>
 
-      <div className="panel map-panel">
-        <div className="panel-head">
-          <div><h2>{activeGroup ? `Mapa · ${activeGroup.location.label}` : "Mapa"}</h2><span>{activeGroup ? `${activeMapped.length} ubicadas · ${activeMissing.length} pendientes` : "Cargá envíos para iniciar"}</span></div>
-          {nextGroup && <button className="button next-location" disabled={busy} onClick={() => void activateLocation(nextGroup.key)}>Siguiente: {nextGroup.location.label} →</button>}
+      <section className="panel map-panel" id="mapa">
+        <div className="map-toolbar">
+          <div>
+            <span className="section-kicker">MAPA</span>
+            <h2>{activeGroup ? activeGroup.location.label : "Sin localidad activa"}</h2>
+          </div>
+          <div className="map-meta">
+            <span><b>{activeMapped.length}</b> ubicadas</span>
+            <span><b>{activeMissing.length}</b> pendientes</span>
+          </div>
         </div>
         <MapView stops={optimized} origin={origin} />
-      </div>
+        {nextGroup && <button className="next-location" disabled={busy} onClick={() => void activateLocation(nextGroup.key)}>Siguiente localidad · {nextGroup.location.label} →</button>}
+      </section>
     </section>
 
-    <section className="panel route-panel">
-      <div className="panel-head">
-        <div><h2>{activeGroup ? `Envíos · ${activeGroup.location.label}` : "Envíos"}</h2><span>{display.length} paradas</span></div>
-        <div className="actions compact">
-          <button className="button" onClick={exportRoute}><span aria-hidden="true">↓</span> CSV</button>
-          <button className="button danger" onClick={clearAll}><span aria-hidden="true">×</span> Limpiar</button>
+    {localityGroups.length > 0 && <section className="locality-strip" aria-label="Localidades">
+      {localityGroups.map((group, index) => {
+        const active = group.key === activeLocationKey;
+        const mappedCount = group.rows.filter((row) => Number.isFinite(row.lat) && Number.isFinite(row.lon)).length;
+        return <button key={group.key} className={`locality-chip ${active ? "active" : ""}`} disabled={busy && !active} onClick={() => void activateLocation(group.key)}>
+          <span>{String(index + 1).padStart(2, "0")}</span>
+          <b>{group.location.label}</b>
+          <small>{group.rows.length} · {active ? "activo" : mappedCount === group.rows.length && mappedCount > 0 ? "listo" : "espera"}</small>
+        </button>;
+      })}
+    </section>}
+
+    <section className="panel route-panel" id="paradas">
+      <div className="route-toolbar">
+        <div><span className="section-kicker">PARADAS</span><h2>{activeGroup ? activeGroup.location.label : "Envíos"}</h2></div>
+        <div className="route-actions">
+          <span>{display.length} paradas</span>
+          <button className="secondary-action compact-action" onClick={exportRoute}>CSV</button>
         </div>
       </div>
-      <div className="data-head"><span>Parada</span><span>Nº paquete</span><span>Nombre</span><span>Dirección</span><span>Localidad</span><span>CP</span><span>Estado</span></div>
       <div className="stops">
-        {display.map((stop, index) => <article className={`stop stop-v2 ${stop.precision && stop.precision !== "exact" && stop.precision !== "manual" ? "approx" : ""}`} key={stop.id}>
-          <div className="number"><strong>{Number.isFinite(stop.lat) ? index + 1 : "!"}</strong></div>
-          <div className="package-cell"><small>Nº paquete</small><b>{stop.packageNo}</b></div>
-          <div className="person-cell"><small>Nombre</small><b>{stop.name || "—"}</b></div>
-          <div className="address-cell"><small>Dirección</small><b>{stop.address}</b>{stop.reason && <span className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</span>}{(!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) && <div className="location-fallback"><a href={googleMapsSearch(stop)} target="_blank" rel="noreferrer">Google Maps</a><button type="button" onClick={() => openCoordinateEditor(stop)}>Pegar coordenadas</button></div>}</div>
-          <div className="location-cell"><small>Localidad</small><b>{stop.locality || locationByKey(stop.locationKey).label}</b></div>
-          <div className="cp-cell"><small>CP</small><b>{stop.postalCode}</b></div>
-          <div className="status-cell"><small>Estado</small><select value={stop.status} onChange={(event) => setStops((previous) => previous.map((item) => item.id === stop.id ? { ...item, status: event.target.value as Status } : item))}><option value="pending">Pendiente</option><option value="delivered">Entregado</option><option value="failed">No entregado</option></select><button onClick={() => void editStop(stop)}>Editar</button></div>
+        {display.map((stop, index) => <article className={`stop-card ${stop.precision && stop.precision !== "exact" && stop.precision !== "manual" ? "approx" : ""}`} key={stop.id}>
+          <div className="stop-number">{Number.isFinite(stop.lat) ? index + 1 : "!"}</div>
+          <div className="stop-main">
+            <div className="stop-heading"><b>{stop.address}</b><span>{stop.locality || locationByKey(stop.locationKey).label} · {stop.postalCode}</span></div>
+            {(stop.name || stop.packageNo) && <div className="stop-subline">{stop.packageNo && <span>#{stop.packageNo}</span>}{stop.name && <span>{stop.name}</span>}</div>}
+            {stop.reason && <p className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</p>}
+            {(!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) && <div className="location-fallback"><a href={googleMapsSearch(stop)} target="_blank" rel="noreferrer">Google Maps</a><button type="button" onClick={() => openCoordinateEditor(stop)}>Pegar coordenadas</button></div>}
+          </div>
+          <div className="stop-controls">
+            <select aria-label={`Estado de ${stop.address}`} value={stop.status} onChange={(event) => setStops((previous) => previous.map((item) => item.id === stop.id ? { ...item, status: event.target.value as Status } : item))}><option value="pending">Pendiente</option><option value="delivered">Entregado</option><option value="failed">No entregado</option></select>
+            <button type="button" onClick={() => void editStop(stop)}>Editar</button>
+          </div>
         </article>)}
-        {!display.length && <div className="empty">Todavía no hay envíos.</div>}
+        {!display.length && <div className="empty-state"><span aria-hidden="true">⌖</span><b>Sin paradas todavía</b><small>Cargá direcciones, un PDF o imágenes.</small></div>}
       </div>
     </section>
 
@@ -719,12 +722,16 @@ import {
         <p>{coordinateStop.rawAddress || coordinateStop.address} · {coordinateStop.locality}</p>
         <input autoFocus value={coordinateText} onChange={(event) => setCoordinateText(event.target.value)} placeholder="-34.585, -60.949 o URL de Google Maps" />
         <div className="coordinate-actions">
-          <a className="button" href={googleMapsSearch(coordinateStop)} target="_blank" rel="noreferrer">Buscar en Google Maps</a>
+          <a className="secondary-action" href={googleMapsSearch(coordinateStop)} target="_blank" rel="noreferrer">Google Maps</a>
           <button className="primary" type="button" onClick={saveCoordinates}>Usar coordenadas</button>
         </div>
       </section>
     </div>}
 
-    <footer>Ruta Envíos</footer>
+    <nav className="mobile-dock" aria-label="Secciones">
+      <a href="#cargar"><span>＋</span>Cargar</a>
+      <a href="#mapa"><span>⌖</span>Mapa</a>
+      <a href="#paradas"><span>≡</span>Paradas</a>
+    </nav>
   </main>;
  }
