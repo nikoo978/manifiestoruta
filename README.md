@@ -45,3 +45,4 @@ npm run dev
 La ruta se persiste en `localStorage` con la clave `ruta-postal:v2`. La versión unificada migra automáticamente los datos existentes de `ruta-postal:v1` cuando están disponibles.
 "# manifiestoruta" 
 "# suite-manifiestos" 
+"# suite-manifiestos" 
