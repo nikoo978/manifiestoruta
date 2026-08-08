@@ -2,15 +2,17 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Ruta Envíos · Suite Manifiestos",
+    name: "Ruta Envíos",
     short_name: "Ruta Envíos",
-    description: "Planificador de reparto con direcciones libres, PDF sin OCR, imágenes con OCR y mapas por localidad.",
+    description: "Planificador de reparto con carga manual, PDF e imágenes.",
     start_url: "/",
     scope: "/",
     display: "standalone",
     background_color: "#f4f7f2",
     theme_color: "#f4f7f2",
     icons: [
+      { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
       { src: "/icons/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
     ],
   };

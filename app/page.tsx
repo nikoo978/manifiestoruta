@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { InstallPwa } from "./pwa-controls";
 import { analyzeCatalogAddress } from "@/lib/street-catalog";
 import { inferLocation, locationByKey, SUPPORTED_LOCATIONS } from "@/lib/supported-locations";
 import { parseManifestPdf } from "@/lib/manifest-pdf";
@@ -14,7 +15,7 @@ import {
 } from "@/lib/route-transfer";
 
  type Status = "pending" | "delivered" | "failed";
- type Precision = "exact" | "parallel" | "street" | "missing";
+ type Precision = "exact" | "manual" | "parallel" | "street" | "missing";
 
  type Stop = {
   id: string;
@@ -216,6 +217,34 @@ import {
     });
  }
 
+
+ function parseCoordinates(value: string) {
+  const source = value.trim();
+  if (!source) return null;
+  let decoded = source;
+  try { decoded = decodeURIComponent(source); } catch { /* URL parcial */ }
+  const number = "(-?\\d{1,3}(?:\\.\\d+)?)";
+  const patterns = [
+    new RegExp(`@${number},${number}`),
+    new RegExp(`!3d${number}!4d${number}`),
+    new RegExp(`[?&](?:q|query|ll)=${number}(?:,|%2C|\\s)+${number}`, "i"),
+    new RegExp(`^\\s*${number}\\s*[,;]\\s*${number}\\s*$`),
+  ];
+  for (const pattern of patterns) {
+    const match = decoded.match(pattern);
+    if (!match) continue;
+    const lat = Number(match[1]);
+    const lon = Number(match[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) return { lat, lon };
+  }
+  return null;
+ }
+
+ function googleMapsSearch(stop: Stop) {
+  const query = [stop.rawAddress || stop.address, stop.locality, stop.postalCode, "Buenos Aires", "Argentina"].filter(Boolean).join(", ");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+ }
+
  function MapView({ stops, origin }: { stops: Stop[]; origin?: { lat: number; lon: number } }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -238,7 +267,7 @@ import {
       const points: [number, number][] = [];
       stops.forEach((stop, index) => {
         if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) return;
-        const approximate = stop.precision !== "exact";
+        const approximate = stop.precision !== "exact" && stop.precision !== "manual";
         const icon = L.divIcon({
           className: "route-marker-wrap",
           html: `<div class="route-marker ${approximate ? "approx" : ""}"><span>${index + 1}</span></div>`,
@@ -273,6 +302,8 @@ import {
   const [origin, setOrigin] = useState<{ lat: number; lon: number }>();
   const [activeLocationKey, setActiveLocationKey] = useState("");
   const [message, setMessage] = useState("");
+  const [coordinateStopId, setCoordinateStopId] = useState<string | null>(null);
+  const [coordinateText, setCoordinateText] = useState("");
 
   useEffect(() => {
     try {
@@ -502,6 +533,38 @@ import {
     await geocode([edited]);
   }
 
+  function clearAll() {
+    if (!stops.length || confirm("¿Borrar todos los envíos y mapas?")) {
+      setStops([]);
+      setActiveLocationKey("");
+      setMessage("");
+    }
+  }
+
+  function openCoordinateEditor(stop: Stop) {
+    setCoordinateStopId(stop.id);
+    setCoordinateText(Number.isFinite(stop.lat) && Number.isFinite(stop.lon) ? `${stop.lat}, ${stop.lon}` : "");
+  }
+
+  function saveCoordinates() {
+    if (!coordinateStopId) return;
+    const coordinates = parseCoordinates(coordinateText);
+    if (!coordinates) {
+      setMessage("Pegá coordenadas como -34.585, -60.949 o una URL de Google Maps que las contenga.");
+      return;
+    }
+    setStops((previous) => previous.map((stop) => stop.id === coordinateStopId ? {
+      ...stop,
+      lat: coordinates.lat,
+      lon: coordinates.lon,
+      precision: "manual",
+      reason: "Ubicación confirmada con coordenadas manuales.",
+    } : stop));
+    setCoordinateStopId(null);
+    setCoordinateText("");
+    setMessage("Coordenadas guardadas.");
+  }
+
   function locate() {
     navigator.geolocation?.getCurrentPosition(
       (position) => setOrigin({ lat: position.coords.latitude, lon: position.coords.longitude }),
@@ -538,24 +601,24 @@ import {
 
   const nextGroup = localityGroups.find((group) => group.key !== activeLocationKey && group.rows.some((row) => row.status === "pending"));
 
+  const coordinateStop = coordinateStopId ? stops.find((stop) => stop.id === coordinateStopId) : undefined;
+
   return <main className="ruta-postal">
     <nav className="suite-nav" aria-label="Herramientas">
       <strong>Ruta Envíos</strong>
-      <span>Direcciones libres · PDF sin OCR · Imágenes con OCR automático</span>
+      <div className="top-actions">
+        <InstallPwa />
+        <button className="button danger clear-top" type="button" disabled={!stops.length} onClick={clearAll}><span aria-hidden="true">×</span> Limpiar</button>
+      </div>
     </nav>
 
-    <header>
+    <header className="app-header">
       <div>
-        <p className="eyebrow">RUTA ENVÍOS · FLUJO PRINCIPAL</p>
-        <h1>Direcciones listas para repartir.</h1>
-        <p>Escribí direcciones libremente, arrastrá un PDF o cargá imágenes del manifiesto. Se conserva el flujo original de Ruta Envíos y se suman OCR, PDF y mapas separados por localidad.</p>
+        <h1>Planificar reparto</h1>
+        <p>Direcciones, PDF o imágenes.</p>
       </div>
       <button className="icon-btn" onClick={locate} title="Usar mi ubicación" aria-label="Usar mi ubicación"><span aria-hidden="true">⌖</span></button>
     </header>
-
-    <section className="format-strip" aria-label="Formato de datos">
-      <span>Nº de paquete</span><span>Nombre</span><span>Dirección</span><span>Localidad</span><span>CP</span>
-    </section>
 
     <section className="stats">
       <div><b>{stops.length}</b><span>envíos totales</span></div>
@@ -564,7 +627,7 @@ import {
     </section>
 
     <section className="panel locality-panel">
-      <div className="panel-head"><div><h2>Localidades</h2><span>Sólo la localidad activa aparece en el mapa. Las demás quedan en espera.</span></div></div>
+      <div className="panel-head"><div><h2>Localidades</h2><span>Una localidad por mapa.</span></div></div>
       <div className="locality-queue">
         {localityGroups.map((group, index) => {
           const active = group.key === activeLocationKey;
@@ -588,7 +651,7 @@ import {
             {SUPPORTED_LOCATIONS.filter((location) => location.locality).map((location) => <option value={location.key} key={location.key}>{location.label} · CP {location.postalCode}</option>)}
           </select>
         </div>
-        <p className="helper top">Escribí como hablás: una dirección por línea. Si indicás la localidad dentro de la línea, se detecta sola. También sigue aceptando la tabla de cinco columnas de los manifiestos.</p>
+        <p className="helper top">Una dirección por línea. La localidad dentro de la línea es opcional.</p>
         <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={'Rivadavia 40 Junín\nSalta 32 Junín\nArias entre Cabrera y Quintana Junín\nSan Martín 248 Ferré'} />
         <button className="primary manual-submit" disabled={busy || !text.trim()} onClick={addManual}><span aria-hidden="true">⌖</span> Ubicar direcciones</button>
 
@@ -603,18 +666,17 @@ import {
           tabIndex={0}
           onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !busy) universalPicker.current?.click(); }}
         >
-          <strong>Arrastrá un PDF o imágenes acá</strong>
-          <span>PDF: lectura directa sin OCR · Imágenes: OCR automático</span>
+          <strong>Soltá PDF o imágenes</strong>
+          <span>o tocá para elegir archivos</span>
         </div>
         <input ref={universalPicker} type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => { void importFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
 
         <div className="actions file-actions">
-          <label className="button"><span aria-hidden="true">↑</span> Elegir PDF<input type="file" accept="application/pdf" hidden disabled={busy} onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>
-          <button className="button ocr-button" type="button" disabled={busy} onClick={() => imagePicker.current?.click()}><span aria-hidden="true">◎</span> Elegir imágenes (OCR)</button>
+          <label className="button"><span aria-hidden="true">↑</span> PDF<input type="file" accept="application/pdf" hidden disabled={busy} onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>
+          <button className="button ocr-button" type="button" disabled={busy} onClick={() => imagePicker.current?.click()}><span aria-hidden="true">◎</span> Imágenes</button>
           <input ref={imagePicker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
         </div>
         {message && <p className="message" aria-live="polite">{message}</p>}
-        <p className="helper"><b>Entrada manual:</b> no exige Nº de paquete, nombre ni CP. <b>PDF:</b> usa la capa de texto y no consume OCR. <b>Imágenes:</b> usan OCR. En todos los casos se corrige la calle, se respetan expresiones como <b>“Arias entre Cabrera y Quintana”</b> y se procesa una localidad por vez.</p>
       </div>
 
       <div className="panel map-panel">
@@ -628,27 +690,41 @@ import {
 
     <section className="panel route-panel">
       <div className="panel-head">
-        <div><h2>{activeGroup ? `Envíos · ${activeGroup.location.label}` : "Envíos"}</h2><span>La numeración grande indica el orden sugerido de reparto dentro de esta localidad.</span></div>
+        <div><h2>{activeGroup ? `Envíos · ${activeGroup.location.label}` : "Envíos"}</h2><span>{display.length} paradas</span></div>
         <div className="actions compact">
           <button className="button" onClick={exportRoute}><span aria-hidden="true">↓</span> CSV</button>
-          <button className="button danger" onClick={() => { if (confirm("¿Borrar todos los envíos y mapas?")) setStops([]); }}><span aria-hidden="true">×</span> Limpiar</button>
+          <button className="button danger" onClick={clearAll}><span aria-hidden="true">×</span> Limpiar</button>
         </div>
       </div>
       <div className="data-head"><span>Parada</span><span>Nº paquete</span><span>Nombre</span><span>Dirección</span><span>Localidad</span><span>CP</span><span>Estado</span></div>
       <div className="stops">
-        {display.map((stop, index) => <article className={`stop stop-v2 ${stop.precision && stop.precision !== "exact" ? "approx" : ""}`} key={stop.id}>
+        {display.map((stop, index) => <article className={`stop stop-v2 ${stop.precision && stop.precision !== "exact" && stop.precision !== "manual" ? "approx" : ""}`} key={stop.id}>
           <div className="number"><strong>{Number.isFinite(stop.lat) ? index + 1 : "!"}</strong></div>
           <div className="package-cell"><small>Nº paquete</small><b>{stop.packageNo}</b></div>
           <div className="person-cell"><small>Nombre</small><b>{stop.name || "—"}</b></div>
-          <div className="address-cell"><small>Dirección</small><b>{stop.address}</b>{stop.reason && <span className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</span>}</div>
+          <div className="address-cell"><small>Dirección</small><b>{stop.address}</b>{stop.reason && <span className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</span>}{(!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) && <div className="location-fallback"><a href={googleMapsSearch(stop)} target="_blank" rel="noreferrer">Google Maps</a><button type="button" onClick={() => openCoordinateEditor(stop)}>Pegar coordenadas</button></div>}</div>
           <div className="location-cell"><small>Localidad</small><b>{stop.locality || locationByKey(stop.locationKey).label}</b></div>
           <div className="cp-cell"><small>CP</small><b>{stop.postalCode}</b></div>
           <div className="status-cell"><small>Estado</small><select value={stop.status} onChange={(event) => setStops((previous) => previous.map((item) => item.id === stop.id ? { ...item, status: event.target.value as Status } : item))}><option value="pending">Pendiente</option><option value="delivered">Entregado</option><option value="failed">No entregado</option></select><button onClick={() => void editStop(stop)}>Editar</button></div>
         </article>)}
-        {!display.length && <div className="empty">Todavía no hay envíos para esta localidad. Escribí direcciones, arrastrá un PDF o cargá imágenes del manifiesto.</div>}
+        {!display.length && <div className="empty">Todavía no hay envíos.</div>}
       </div>
     </section>
 
-    <footer>Ruta Envíos · Suite Manifiestos · entrada libre, PDF, OCR y mapas separados por localidad · Georef Argentina + OpenStreetMap.</footer>
+    {coordinateStop && <div className="coordinate-backdrop" role="presentation" onClick={() => setCoordinateStopId(null)}>
+      <section className="coordinate-sheet" role="dialog" aria-modal="true" aria-labelledby="coordinate-title" onClick={(event) => event.stopPropagation()}>
+        <span className="sheet-handle" aria-hidden="true" />
+        <button className="sheet-close" type="button" aria-label="Cerrar" onClick={() => setCoordinateStopId(null)}>×</button>
+        <h2 id="coordinate-title">Ubicar manualmente</h2>
+        <p>{coordinateStop.rawAddress || coordinateStop.address} · {coordinateStop.locality}</p>
+        <input autoFocus value={coordinateText} onChange={(event) => setCoordinateText(event.target.value)} placeholder="-34.585, -60.949 o URL de Google Maps" />
+        <div className="coordinate-actions">
+          <a className="button" href={googleMapsSearch(coordinateStop)} target="_blank" rel="noreferrer">Buscar en Google Maps</a>
+          <button className="primary" type="button" onClick={saveCoordinates}>Usar coordenadas</button>
+        </div>
+      </section>
+    </div>}
+
+    <footer>Ruta Envíos</footer>
   </main>;
  }

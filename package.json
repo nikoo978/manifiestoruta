@@ -1,6 +1,6 @@
 {
-  "name": "suite-manifiestos",
-  "version": "1.6.0",
+  "name": "ruta-envios",
+  "version": "1.7.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

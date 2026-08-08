@@ -4,18 +4,19 @@ import "./globals.css";
 import "./ruta/ruta.css";
 
 export const metadata: Metadata = {
-  title: "Ruta Postal · Suite Manifiestos",
-  description: "Ruta Envíos con direcciones libres, PDF sin OCR, imágenes con OCR y geocodificación por localidad.",
-  applicationName: "Suite Manifiestos",
+  title: "Ruta Envíos",
+  description: "Planificador de reparto con carga manual, PDF e imágenes.",
+  applicationName: "Ruta Envíos",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
-    title: "Ruta Postal · Suite Manifiestos",
+    statusBarStyle: "black-translucent",
+    title: "Ruta Envíos",
   },
   formatDetection: { telephone: false },
   icons: {
-    icon: [{ url: "/icons/icon.svg", type: "image/svg+xml" }],
+    icon: [{ url: "/icons/icon.svg", type: "image/svg+xml" }, { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }, { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" }],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 

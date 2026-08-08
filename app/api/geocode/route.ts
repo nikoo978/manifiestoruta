@@ -145,7 +145,7 @@ async function resolveOne(raw:string,locationKey:string):Promise<Result>{
   if(hit && analysis.height){ const label=normalizeText(`${hit.street} ${hit.name}`); if(label.includes(String(analysis.height))) return {lat:hit.lat,lon:hit.lon,precision:"exact",source:"photon",reason:"Domicilio localizado por Photon/OpenStreetMap.",normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections}; }
   if(analysis.height){const parallel=await parallelFallback(analysis.mainStreet,analysis.height,locationKey);if(parallel)return{...parallel.point,precision:"parallel",source:"overpass",reason:parallel.reason,normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections};}
   const streetHits=await photon(analysis.mainStreet,locationKey,2); if(streetHits[0])return{lat:streetHits[0].lat,lon:streetHits[0].lon,precision:"street",source:"photon",reason:analysis.height?`No se encontró la altura ${analysis.height}; se marcó un punto aproximado sobre ${analysis.mainStreet}.`:`Se encontró la calle, pero la dirección no incluye una altura utilizable.`,normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections};
-  return{precision:"missing",source:"none",reason:"No se pudo localizar la calle ni una referencia suficientemente confiable.",normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections};
+  return{precision:"missing",source:"none",reason:"No se pudo ubicar automáticamente.",normalizedAddress:analysis.correctedAddress,locality:loc.label,corrections:analysis.corrections};
 }
 
 export async function POST(request:NextRequest){

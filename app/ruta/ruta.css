@@ -24,3 +24,103 @@
 .ruta-postal .manual-location{display:grid;gap:6px;margin-bottom:12px}.ruta-postal .manual-location label{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.055em;color:var(--route-muted)}
 .ruta-postal .manual-submit{width:100%;margin-bottom:14px}.ruta-postal .drop-zone{border:2px dashed #a9bdad;background:#f7faf7;border-radius:16px;min-height:116px;padding:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .15s ease}.ruta-postal .drop-zone strong{font-size:.95rem}.ruta-postal .drop-zone span{font-size:.78rem;color:var(--route-muted);line-height:1.4}.ruta-postal .drop-zone:hover,.ruta-postal .drop-zone.dragging{border-color:var(--route-green);background:var(--route-green2);transform:translateY(-1px)}.ruta-postal .drop-zone:focus-visible{outline:3px solid #8db49a;outline-offset:2px}.ruta-postal .file-actions{margin-top:10px}
 @media(max-width:650px){.ruta-postal .drop-zone{min-height:104px;padding:16px}.ruta-postal .manual-submit{width:100%}}
+
+/* v1.7 · interfaz app + fallback manual de coordenadas */
+.ruta-postal{max-width:1280px;padding:20px 22px 28px;min-height:100dvh}
+.ruta-postal .suite-nav{margin-bottom:8px;top:max(8px,env(safe-area-inset-top));padding:9px 11px;border-radius:16px;box-shadow:0 8px 26px rgba(17,42,27,.06)}
+.ruta-postal .suite-nav strong{font-size:.88rem;letter-spacing:.03em;text-transform:none}
+.ruta-postal .suite-nav .top-actions{gap:8px}
+.ruta-postal .suite-nav .button,.ruta-postal .suite-nav .install-button{min-height:38px;border-radius:11px;padding:7px 11px;font-size:.76rem;font-weight:750}
+.ruta-postal .suite-nav .install-button{color:var(--route-ink);border-color:var(--route-line);background:#fff}
+.ruta-postal .suite-nav .install-button span{color:var(--route-green)}
+.ruta-postal .clear-top{border-color:#e7c3c3;background:#fff7f7;color:var(--route-red)}
+.ruta-postal .clear-top:disabled{opacity:.4}
+.ruta-postal .app-header{padding:20px 4px 14px;align-items:center}
+.ruta-postal .app-header h1{font-size:clamp(1.9rem,4.5vw,2.7rem);line-height:1;letter-spacing:-.045em;margin:0}
+.ruta-postal .app-header p{font-size:.9rem;line-height:1.35;margin:7px 0 0;color:var(--route-muted)}
+.ruta-postal .stats{gap:9px;margin-bottom:12px}
+.ruta-postal .stats div{background:#fff;color:var(--route-ink);border:1px solid var(--route-line);border-radius:14px;padding:13px 15px;box-shadow:none}
+.ruta-postal .stats b{font-size:1.55rem;line-height:1.1}
+.ruta-postal .stats span{color:var(--route-muted);opacity:1;font-size:.76rem}
+.ruta-postal .panel{border-radius:17px;box-shadow:0 8px 24px rgba(17,42,27,.035)}
+.ruta-postal .panel-head{padding:16px 18px}
+.ruta-postal .panel-head h2{font-size:1.02rem;margin-bottom:2px}
+.ruta-postal .panel-head span{font-size:.75rem}
+.ruta-postal .locality-panel{margin-bottom:12px}
+.ruta-postal .locality-queue{padding:0 16px 16px;gap:8px}
+.ruta-postal .locality-card{border-radius:12px;padding:11px}
+.ruta-postal .grid{gap:12px;grid-template-columns:minmax(310px,.7fr) minmax(0,1.3fr)}
+.ruta-postal .input-panel{padding:18px}
+.ruta-postal .input-panel>h2{font-size:1.05rem;margin-bottom:14px}
+.ruta-postal .manual-location{margin-bottom:8px}
+.ruta-postal .manual-location label{font-size:.68rem}
+.ruta-postal select,.ruta-postal textarea{border-radius:11px;padding:11px 12px}
+.ruta-postal textarea{min-height:145px;margin:7px 0 9px;line-height:1.42}
+.ruta-postal .helper{font-size:.75rem;line-height:1.35;margin:8px 0 0}
+.ruta-postal .manual-submit{margin-bottom:11px;min-height:46px}
+.ruta-postal .drop-zone{min-height:92px;border-width:1.5px;border-radius:13px;padding:14px;gap:4px}
+.ruta-postal .drop-zone strong{font-size:.87rem}
+.ruta-postal .drop-zone span{font-size:.72rem}
+.ruta-postal .file-actions{margin-top:8px;display:grid;grid-template-columns:1fr 1fr}
+.ruta-postal .file-actions .button{width:100%;min-height:42px}
+.ruta-postal .message{font-size:.76rem;line-height:1.35;margin-top:9px}
+.ruta-postal .map{height:min(58dvh,570px);min-height:390px}
+.ruta-postal .route-panel{margin-top:12px}
+.ruta-postal .location-fallback{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.ruta-postal .location-fallback a,.ruta-postal .location-fallback button{border:1px solid var(--route-line);background:#fff;color:var(--route-green);border-radius:9px;min-height:34px;padding:6px 9px;text-decoration:none;font-size:.72rem;font-weight:750;cursor:pointer}
+.ruta-postal .location-fallback a:hover,.ruta-postal .location-fallback button:hover{border-color:var(--route-green);background:var(--route-green2)}
+.ruta-postal .reason.manual{border-color:var(--route-green);color:var(--route-green)}
+.ruta-postal .coordinate-backdrop{position:fixed;inset:0;z-index:1200;background:rgba(10,27,18,.48);display:flex;align-items:flex-end;justify-content:center;padding-top:40px}
+.ruta-postal .coordinate-sheet{position:relative;width:min(100%,520px);background:#fff;border-radius:22px 22px 0 0;padding:15px 20px calc(20px + env(safe-area-inset-bottom));box-shadow:0 -18px 55px rgba(10,27,18,.24)}
+.ruta-postal .coordinate-sheet .sheet-handle{display:block;width:42px;height:5px;border-radius:99px;background:#d5ddd6;margin:0 auto 16px}
+.ruta-postal .coordinate-sheet .sheet-close{position:absolute;right:14px;top:12px;width:38px;height:38px;border:0;border-radius:50%;background:#f0f4f1;font-size:1.35rem;display:grid;place-items:center}
+.ruta-postal .coordinate-sheet h2{font-size:1.2rem;margin:0 42px 6px 0}
+.ruta-postal .coordinate-sheet p{font-size:.78rem;color:var(--route-muted);line-height:1.4;margin:0 0 14px}
+.ruta-postal .coordinate-sheet input{width:100%;min-height:48px;border:1px solid var(--route-line);border-radius:11px;padding:11px 12px;font-size:16px;color:var(--route-ink)}
+.ruta-postal .coordinate-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.ruta-postal .coordinate-actions .button,.ruta-postal .coordinate-actions .primary{width:100%;min-height:46px}
+.ruta-postal footer{padding:18px 12px 0;font-size:.7rem}
+
+@media(max-width:850px){
+  body{background:var(--route-bg,#f4f7f2)}
+  .ruta-postal{max-width:none;padding:0 12px calc(18px + env(safe-area-inset-bottom))}
+  .ruta-postal .suite-nav{margin:0 -12px 8px;border-radius:0;border-left:0;border-right:0;border-top:0;top:0;padding:calc(9px + env(safe-area-inset-top)) 12px 9px;background:rgba(255,255,255,.94);box-shadow:0 6px 20px rgba(17,42,27,.07)}
+  .ruta-postal .app-header{padding:14px 2px 11px}
+  .ruta-postal .app-header h1{font-size:1.85rem}
+  .ruta-postal .app-header p{font-size:.8rem}
+  .ruta-postal .stats{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .ruta-postal .stats div{padding:10px 9px;border-radius:12px}
+  .ruta-postal .stats b{font-size:1.3rem}
+  .ruta-postal .stats span{display:block;font-size:.66rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ruta-postal .locality-panel{overflow:hidden}
+  .ruta-postal .locality-queue{display:flex;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;padding:0 12px 12px;scrollbar-width:none}
+  .ruta-postal .locality-queue::-webkit-scrollbar{display:none}
+  .ruta-postal .locality-card{flex:0 0 min(78vw,260px);scroll-snap-align:start}
+  .ruta-postal .queue-empty{min-width:100%}
+  .ruta-postal .grid{grid-template-columns:1fr;gap:10px}
+  .ruta-postal .input-panel{padding:15px}
+  .ruta-postal textarea{min-height:132px;font-size:16px}
+  .ruta-postal select{font-size:16px}
+  .ruta-postal .map{height:52dvh;min-height:350px;max-height:520px}
+  .ruta-postal .route-panel{border-radius:16px}
+  .ruta-postal .stop.stop-v2{padding:14px 12px}
+  .ruta-postal .location-fallback a,.ruta-postal .location-fallback button{min-height:40px;padding:8px 10px}
+  .ruta-postal footer{display:none}
+}
+
+@media(max-width:520px){
+  .ruta-postal .suite-nav strong{font-size:.83rem}
+  .ruta-postal .suite-nav .top-actions{gap:5px}
+  .ruta-postal .suite-nav .button,.ruta-postal .suite-nav .install-button{min-height:40px;padding:7px 9px;font-size:.7rem}
+  .ruta-postal .app-header .icon-btn{width:44px;height:44px}
+  .ruta-postal .file-actions{grid-template-columns:1fr 1fr}
+  .ruta-postal .panel-head{padding:14px}
+  .ruta-postal .map{height:48dvh;min-height:330px}
+  .ruta-postal .coordinate-sheet{padding-left:14px;padding-right:14px}
+  .ruta-postal .coordinate-actions{grid-template-columns:1fr}
+}
+
+@media(display-mode:standalone){
+  .ruta-postal .suite-nav{top:0}
+  .ruta-postal{padding-bottom:calc(18px + env(safe-area-inset-bottom))}
+}
