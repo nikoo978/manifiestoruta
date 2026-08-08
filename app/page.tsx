@@ -304,6 +304,9 @@ import {
   const [message, setMessage] = useState("");
   const [coordinateStopId, setCoordinateStopId] = useState<string | null>(null);
   const [coordinateText, setCoordinateText] = useState("");
+  const [editStopId, setEditStopId] = useState<string | null>(null);
+  const [editAddress, setEditAddress] = useState("");
+  const [editLocationKey, setEditLocationKey] = useState("junin-6000");
 
   useEffect(() => {
     try {
@@ -344,7 +347,7 @@ import {
       const response = await fetch("/api/geocode", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ direcciones: pending.map((stop) => ({ direccion: stop.address, locationKey: stop.locationKey })) }),
+        body: JSON.stringify({ direcciones: pending.map((stop) => ({ direccion: stop.rawAddress || stop.address, locationKey: stop.locationKey })) }),
       });
       if (!response.ok) throw new Error("No respondió el servicio de geocodificación.");
       const data = await response.json() as { results: GeoResult[] };
@@ -514,22 +517,35 @@ import {
     await importImages(images);
   }
 
-  async function editStop(stop: Stop) {
-    const packageText = prompt("Nº de paquete", String(stop.packageNo));
-    if (packageText === null) return;
-    const name = prompt("Nombre", stop.name) ?? stop.name;
-    const address = prompt("Dirección", stop.rawAddress || stop.address) ?? stop.rawAddress;
-    const locality = prompt("Localidad", stop.locality) ?? stop.locality;
-    const postalCode = prompt("CP", stop.postalCode) ?? stop.postalCode;
-    const inferred = inferLocation(locality, postalCode);
-    const analysis = analyzeCatalogAddress(address.trim(), inferred.key);
+  function openAddressEditor(stop: Stop) {
+    setEditStopId(stop.id);
+    setEditAddress(stop.rawAddress || stop.address);
+    setEditLocationKey(stop.locationKey);
+  }
+
+  async function saveAddressEdit() {
+    if (!editStopId || !editAddress.trim()) return;
+    const current = stops.find((stop) => stop.id === editStopId);
+    if (!current) return;
+    const location = locationByKey(editLocationKey);
+    const analysis = analyzeCatalogAddress(editAddress.trim(), editLocationKey);
     const edited: Stop = {
-      ...stop, packageNo: Number(packageText.replace(/\D/g, "")) || stop.packageNo, name: name.trim(), rawAddress: address.trim(),
-      address: analysis.correctedAddress, locality: locality.trim() || inferred.label, postalCode: postalCode.replace(/\D/g, "").slice(0, 4) || inferred.postalCode,
-      locationKey: inferred.key, lat: undefined, lon: undefined, precision: undefined, reason: undefined, corrections: analysis.corrections,
+      ...current,
+      rawAddress: editAddress.trim(),
+      address: analysis.correctedAddress,
+      locality: location.label,
+      postalCode: location.postalCode,
+      locationKey: editLocationKey,
+      lat: undefined,
+      lon: undefined,
+      precision: undefined,
+      reason: undefined,
+      corrections: analysis.corrections,
     };
-    setStops((previous) => previous.map((item) => item.id === stop.id ? edited : item));
-    setActiveLocationKey(edited.locationKey);
+    setStops((previous) => previous.map((item) => item.id === current.id ? edited : item));
+    setEditStopId(null);
+    setEditAddress("");
+    setActiveLocationKey(editLocationKey);
     await geocode([edited]);
   }
 
@@ -700,19 +716,38 @@ import {
         {display.map((stop, index) => <article className={`stop-card ${stop.precision && stop.precision !== "exact" && stop.precision !== "manual" ? "approx" : ""}`} key={stop.id}>
           <div className="stop-number">{Number.isFinite(stop.lat) ? index + 1 : "!"}</div>
           <div className="stop-main">
-            <div className="stop-heading"><b>{stop.address}</b><span>{stop.locality || locationByKey(stop.locationKey).label} · {stop.postalCode}</span></div>
+            <div className="stop-heading"><b>{stop.address}</b><button className="edit-address-link" type="button" onClick={() => openAddressEditor(stop)} aria-label={`Editar dirección ${stop.address}`}>Editar</button><span>{stop.locality || locationByKey(stop.locationKey).label} · {stop.postalCode}</span></div>
             {(stop.name || stop.packageNo) && <div className="stop-subline">{stop.packageNo && <span>#{stop.packageNo}</span>}{stop.name && <span>{stop.name}</span>}</div>}
             {stop.reason && <p className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</p>}
-            {(!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) && <div className="location-fallback"><a href={googleMapsSearch(stop)} target="_blank" rel="noreferrer">Google Maps</a><button type="button" onClick={() => openCoordinateEditor(stop)}>Pegar coordenadas</button></div>}
+            {(!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) && <div className="location-fallback"><button type="button" disabled={busy} onClick={() => void geocode([stop])}>Reintentar</button><button type="button" onClick={() => openAddressEditor(stop)}>Corregir dirección</button><a href={googleMapsSearch(stop)} target="_blank" rel="noreferrer">Google Maps</a><button type="button" onClick={() => openCoordinateEditor(stop)}>Pegar coordenadas</button></div>}
           </div>
           <div className="stop-controls">
             <select aria-label={`Estado de ${stop.address}`} value={stop.status} onChange={(event) => setStops((previous) => previous.map((item) => item.id === stop.id ? { ...item, status: event.target.value as Status } : item))}><option value="pending">Pendiente</option><option value="delivered">Entregado</option><option value="failed">No entregado</option></select>
-            <button type="button" onClick={() => void editStop(stop)}>Editar</button>
+            <button type="button" onClick={() => openAddressEditor(stop)}>Editar dirección</button>
           </div>
         </article>)}
         {!display.length && <div className="empty-state"><span aria-hidden="true">⌖</span><b>Sin paradas todavía</b><small>Cargá direcciones, un PDF o imágenes.</small></div>}
       </div>
     </section>
+
+    {editStopId && <div className="coordinate-backdrop" role="presentation" onClick={() => setEditStopId(null)}>
+      <section className="coordinate-sheet edit-address-sheet" role="dialog" aria-modal="true" aria-labelledby="edit-address-title" onClick={(event) => event.stopPropagation()}>
+        <span className="sheet-handle" aria-hidden="true" />
+        <button className="sheet-close" type="button" aria-label="Cerrar" onClick={() => setEditStopId(null)}>×</button>
+        <h2 id="edit-address-title">Editar dirección</h2>
+        <label className="sheet-field">
+          <span>Dirección</span>
+          <input autoFocus value={editAddress} onChange={(event) => setEditAddress(event.target.value)} placeholder="Rivadavia 40" onKeyDown={(event) => { if (event.key === "Enter") void saveAddressEdit(); }} />
+        </label>
+        <label className="sheet-field">
+          <span>Localidad</span>
+          <select value={editLocationKey} onChange={(event) => setEditLocationKey(event.target.value)}>
+            {SUPPORTED_LOCATIONS.filter((location) => location.locality).map((location) => <option value={location.key} key={location.key}>{location.label} · {location.postalCode}</option>)}
+          </select>
+        </label>
+        <button className="primary sheet-save" type="button" disabled={busy || !editAddress.trim()} onClick={() => void saveAddressEdit()}>Guardar y volver a ubicar</button>
+      </section>
+    </div>}
 
     {coordinateStop && <div className="coordinate-backdrop" role="presentation" onClick={() => setCoordinateStopId(null)}>
       <section className="coordinate-sheet" role="dialog" aria-modal="true" aria-labelledby="coordinate-title" onClick={(event) => event.stopPropagation()}>

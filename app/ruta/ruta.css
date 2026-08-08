@@ -23,3 +23,10 @@
 }
 @media(max-width:470px){.ruta-postal .brand-lockup>span:last-child strong{font-size:.84rem}.ruta-postal .install-button{font-size:.68rem;padding:7px 8px}.ruta-postal .map{min-height:350px;height:48dvh}.ruta-postal .file-actions{grid-template-columns:1fr 1fr}.ruta-postal .map-meta span{flex-direction:column;gap:0}.ruta-postal .map-meta b{font-size:.85rem}}
 @media(display-mode:standalone){.ruta-postal .app-bar{top:0}.ruta-postal .install-button{display:none}}
+.ruta-postal .edit-address-link{border:0;background:transparent;color:var(--brand);padding:2px 4px;min-height:auto;font-size:.68rem;font-weight:850;cursor:pointer}
+.ruta-postal .edit-address-link:hover{text-decoration:underline}
+.ruta-postal .sheet-field{display:grid;gap:6px;margin:12px 0}
+.ruta-postal .sheet-field>span{font-size:.7rem;color:var(--muted);font-weight:800}
+.ruta-postal .sheet-field input,.ruta-postal .sheet-field select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);padding:9px 11px;font:inherit}
+.ruta-postal .sheet-save{width:100%;margin-top:8px;min-height:46px}
+@media(max-width:820px){.ruta-postal .edit-address-link{font-size:.72rem}.ruta-postal .sheet-field input,.ruta-postal .sheet-field select{font-size:16px}}

@@ -1,4 +1,4 @@
-const CACHE_NAME = "ruta-envios-v8";
+const CACHE_NAME = "ruta-envios-v9";
 const OFFLINE_SHELL = ["/", "/manifest.webmanifest", "/icons/icon.svg", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png"];
 
 self.addEventListener("install", event => {
