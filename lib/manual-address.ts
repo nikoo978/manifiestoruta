@@ -12,14 +12,11 @@ function fold(value: string) {
 }
 
 const LOCATION_ALIASES = SUPPORTED_LOCATIONS.flatMap((location) => {
-  const base = (location.locality ?? location.label).replace(/\s*\(.*?\)\s*/g, "").trim();
-  const aliases = new Set([base, location.label.replace(/\s*\(.*?\)\s*/g, "").trim()]);
-  if (location.key === "junin-6000") aliases.add("JUNIN");
-  if (location.key === "ferre-6027") aliases.add("FERRE");
-  if (location.key === "ascension-6003") aliases.add("ASCENSION");
-  if (location.key === "los-toldos-6015") aliases.add("LOS TOLDOS");
-  if (location.key === "baigorrita-6013") aliases.add("BAIGORRITA");
-  if (location.key === "general-viamonte-6015") aliases.add("GENERAL VIAMONTE");
+  const aliases = new Set([
+    location.label,
+    location.locality ?? "",
+    ...(location.aliases ?? []),
+  ].map((value) => value.replace(/\s*\(.*?\)\s*/g, "").trim()).filter(Boolean));
   return [...aliases].map((alias) => ({ location, alias, folded: fold(alias) }));
 });
 
@@ -84,7 +81,7 @@ export function parseManualAddresses(text: string, defaultLocationKey: string): 
 
     return [{
       address: value,
-      locality: detected.locality ?? detected.label.replace(/\s*\(.*?\)\s*/g, ""),
+      locality: detected.label,
       postalCode: detected.postalCode,
       locationKey: detected.key,
     }];

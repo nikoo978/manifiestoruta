@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { InstallPwa } from "./pwa-controls";
 import { analyzeCatalogAddress } from "@/lib/street-catalog";
-import { inferLocation, locationByKey, SUPPORTED_LOCATIONS } from "@/lib/supported-locations";
+import { canonicalizeLocation, locationByKey, SUPPORTED_LOCATIONS } from "@/lib/supported-locations";
 import { parseManifestPdf } from "@/lib/manifest-pdf";
 import { parseManualAddresses } from "@/lib/manual-address";
+import { clearSourceFiles, getSourceFile, saveSourceFile, type StoredSource } from "@/lib/source-store";
 import {
   buildRouteTransfer,
   LEGACY_ROUTE_TRANSFER_KEY,
@@ -13,6 +14,7 @@ import {
   ROUTE_TRANSFER_KEY,
   type RouteTransferPayload,
 } from "@/lib/route-transfer";
+import { APP_VERSION } from "@/lib/app-version";
 
  type Status = "pending" | "delivered" | "failed";
  type Precision = "exact" | "manual" | "parallel" | "street" | "missing";
@@ -35,6 +37,12 @@ import {
   corrections?: Array<{ original: string; corrected: string; score: number }>;
   sourceManifest?: string;
   sourceRowId?: string;
+  sourceKind?: "image" | "pdf";
+  sourceId?: string;
+  sourcePage?: number;
+  sourceRow?: number;
+  sourceTop?: number;
+  sourceBottom?: number;
  };
 
  type GeoResult = {
@@ -58,6 +66,8 @@ import {
   postalCode: string;
   barcode: string;
   confidence: number;
+  sourceTop?: number;
+  sourceBottom?: number;
   status: "verified" | "review";
   note?: string;
  };
@@ -69,10 +79,29 @@ import {
   persisted?: boolean;
  };
 
+ type OcrModeChoice = "fast" | "intense";
+ type OcrProgressState = {
+  percent: number;
+  label: string;
+  elapsedMs: number;
+  mode: OcrModeChoice;
+ };
+
+ type OcrStreamEvent = {
+  type: "progress" | "heartbeat" | "result" | "error";
+  percent?: number;
+  message?: string;
+  elapsedMs?: number;
+  mode?: "fast" | "maximum";
+  result?: OcrResult;
+  error?: string;
+ };
+
  const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 
  const STORAGE = "ruta-postal:v3";
  const LEGACY_STORAGES = ["ruta-postal:v2", "ruta-postal:v1"];
+ const ALL_LOCATIONS_KEY = "__all__";
 
  function distance(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
   const y = (a.lat - b.lat) * 111;
@@ -149,14 +178,14 @@ import {
     if (index === 0 && /paquete|n[º°o]/i.test(columns[0]) && /nombre/i.test(columns[1])) return [];
     const [packageText, name, address, locality, postalCode] = columns;
     if (!address) return [];
-    const inferred = inferLocation(locality, postalCode);
+    const canonical = canonicalizeLocation(locality, postalCode);
     return [{
       packageNo: Number(packageText.replace(/\D/g, "")) || index + 1,
       name: name.trim(),
       address: address.trim(),
-      locality: locality.trim() || inferred.label,
-      postalCode: postalCode.replace(/\D/g, "").slice(0, 4) || inferred.postalCode,
-      locationKey: inferred.key,
+      locality: canonical.locality,
+      postalCode: canonical.postalCode,
+      locationKey: canonical.locationKey,
     }];
   });
  }
@@ -166,8 +195,8 @@ import {
   return value.flatMap((raw, index) => {
     if (!raw || typeof raw !== "object") return [];
     const item = raw as Record<string, unknown>;
-    const locationKey = String(item.locationKey ?? inferLocation(String(item.locality ?? ""), String(item.postalCode ?? "")).key);
-    const location = locationByKey(locationKey);
+    const canonical = canonicalizeLocation(String(item.locality ?? ""), String(item.postalCode ?? ""), String(item.locationKey ?? ""));
+    const locationKey = canonical.locationKey;
     const address = String(item.address ?? item.rawAddress ?? "").trim();
     if (!address) return [];
     return [{
@@ -177,8 +206,8 @@ import {
       name: String(item.name ?? item.recipient ?? "").trim(),
       rawAddress: String(item.rawAddress ?? address),
       address,
-      locality: String(item.locality ?? location.label),
-      postalCode: String(item.postalCode ?? location.postalCode),
+      locality: canonical.locality,
+      postalCode: canonical.postalCode,
       locationKey,
       status: (["pending", "delivered", "failed"].includes(String(item.status)) ? item.status : "pending") as Status,
       lat: Number.isFinite(Number(item.lat)) ? Number(item.lat) : undefined,
@@ -188,6 +217,12 @@ import {
       corrections: Array.isArray(item.corrections) ? item.corrections as Stop["corrections"] : undefined,
       sourceManifest: item.sourceManifest ? String(item.sourceManifest) : undefined,
       sourceRowId: item.sourceRowId ? String(item.sourceRowId) : undefined,
+      sourceKind: item.sourceKind === "image" || item.sourceKind === "pdf" ? item.sourceKind : undefined,
+      sourceId: item.sourceId ? String(item.sourceId) : undefined,
+      sourcePage: Number.isFinite(Number(item.sourcePage)) ? Number(item.sourcePage) : undefined,
+      sourceRow: Number.isFinite(Number(item.sourceRow)) ? Number(item.sourceRow) : undefined,
+      sourceTop: Number.isFinite(Number(item.sourceTop)) ? Number(item.sourceTop) : undefined,
+      sourceBottom: Number.isFinite(Number(item.sourceBottom)) ? Number(item.sourceBottom) : undefined,
     }];
   });
  }
@@ -198,7 +233,8 @@ import {
   return payload.rows
     .filter((row) => !known.has(`${payload.manifestNumber}|${row.sourceRowId}`))
     .map((row, index) => {
-      const analysis = analyzeCatalogAddress(row.address, row.locationKey);
+      const canonical = canonicalizeLocation(row.locality, row.postalCode, row.locationKey);
+      const analysis = analyzeCatalogAddress(row.address, canonical.locationKey);
       return {
         id: crypto.randomUUID(),
         loadOrder: start + index + 1,
@@ -206,9 +242,9 @@ import {
         name: row.name,
         rawAddress: row.address,
         address: analysis.correctedAddress,
-        locality: row.locality || locationByKey(row.locationKey).label,
-        postalCode: row.postalCode || locationByKey(row.locationKey).postalCode,
-        locationKey: row.locationKey,
+        locality: canonical.locality,
+        postalCode: canonical.postalCode,
+        locationKey: canonical.locationKey,
         status: "pending" as Status,
         corrections: analysis.corrections,
         sourceManifest: payload.manifestNumber,
@@ -243,6 +279,52 @@ import {
  function googleMapsSearch(stop: Stop) {
   const query = [stop.rawAddress || stop.address, stop.locality, stop.postalCode, "Buenos Aires", "Argentina"].filter(Boolean).join(", ");
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+ }
+
+ async function readOcrResponse(response: Response, mode: OcrModeChoice, onProgress: (progress: OcrProgressState) => void) {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!response.ok && contentType.includes("application/json")) {
+    const body = await response.json() as { error?: string };
+    throw new Error(body.error || "No se pudo procesar el manifiesto con OCR.");
+  }
+  if (!response.body || !contentType.includes("application/x-ndjson")) {
+    const body = await response.json() as OcrResult & { error?: string };
+    if (!response.ok || body.error) throw new Error(body.error || "No se pudo procesar el manifiesto con OCR.");
+    return body;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: OcrResult | null = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as OcrStreamEvent;
+      if (event.type === "error") throw new Error(event.error || "No se pudo procesar el manifiesto con OCR.");
+      if (event.type === "result" && event.result) result = event.result;
+      if (event.type === "progress" || event.type === "heartbeat") {
+        onProgress({
+          percent: Math.max(1, Math.min(99, event.percent ?? 1)),
+          label: event.message || "Procesando OCR…",
+          elapsedMs: event.elapsedMs ?? 0,
+          mode,
+        });
+      }
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) {
+    const event = JSON.parse(buffer) as OcrStreamEvent;
+    if (event.type === "error") throw new Error(event.error || "No se pudo procesar el manifiesto con OCR.");
+    if (event.type === "result" && event.result) result = event.result;
+  }
+  if (!result) throw new Error("El OCR terminó sin devolver un resultado utilizable.");
+  return result;
  }
 
  function MapView({ stops, origin }: { stops: Stop[]; origin?: { lat: number; lon: number } }) {
@@ -290,6 +372,119 @@ import {
   return <div className="map" ref={ref} />;
  }
 
+
+ function PdfSourcePage({ source, stop, scale }: { source: StoredSource; stop: Stop; scale: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const importExternal = new Function("url", "return import(url)") as (url: string) => Promise<any>;
+        const pdfjs: any = await importExternal("https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.149/build/pdf.min.mjs");
+        pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.149/build/pdf.worker.min.mjs";
+        const bytes = new Uint8Array(await source.blob.arrayBuffer());
+        const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+        const pageNumber = Math.max(1, Math.min(stop.sourcePage ?? 1, pdf.numPages));
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.6 });
+        const canvas = canvasRef.current;
+        if (!canvas || cancelled) return;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("No se pudo preparar la vista del PDF.");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        await page.render({ canvasContext: context, viewport }).promise;
+        if (!cancelled && Number.isFinite(stop.sourceTop) && Number.isFinite(stop.sourceBottom)) {
+          requestAnimationFrame(() => highlightRef.current?.scrollIntoView({ behavior: "auto", block: "center" }));
+        }
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "No se pudo abrir la página del PDF.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [source, stop.sourcePage]);
+
+  return <div className="source-viewport"><div className="source-zoom-content" style={{ width: `${scale * 100}%` }}>
+    <div className="source-page-frame"><canvas ref={canvasRef} className="source-pdf-canvas" />
+    {Number.isFinite(stop.sourceTop) && Number.isFinite(stop.sourceBottom) && <div
+      ref={highlightRef}
+      className="source-row-highlight"
+      style={{ top: `${Math.max(0, stop.sourceTop!) * 100}%`, height: `${Math.max(0.025, stop.sourceBottom! - stop.sourceTop!) * 100}%` }}
+    />}
+    {error && <p className="source-error">{error}</p>}
+    </div>
+  </div></div>;
+ }
+
+ function SourceViewer({ stop, onClose }: { stop: Stop; onClose: () => void }) {
+  const [source, setSource] = useState<StoredSource | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [scale, setScale] = useState(1);
+  const imageHighlightRef = useRef<HTMLDivElement>(null);
+  const zoomIn = () => setScale((value) => Math.min(4, Math.round((value + 0.5) * 10) / 10));
+  const zoomOut = () => setScale((value) => Math.max(1, Math.round((value - 0.5) * 10) / 10));
+
+  useEffect(() => {
+    setScale(1);
+    let active = true;
+    let url = "";
+    void (async () => {
+      try {
+        if (!stop.sourceId) throw new Error("La fuente original no está asociada a esta parada.");
+        const stored = await getSourceFile(stop.sourceId);
+        if (!stored) throw new Error("La fuente original ya no está disponible en este dispositivo.");
+        if (!active) return;
+        setSource(stored);
+        if (stored.kind === "image") {
+          url = URL.createObjectURL(stored.blob);
+          setImageUrl(url);
+          if (Number.isFinite(stop.sourceTop) && Number.isFinite(stop.sourceBottom)) {
+            requestAnimationFrame(() => requestAnimationFrame(() => imageHighlightRef.current?.scrollIntoView({ behavior: "auto", block: "center" })));
+          }
+        }
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : "No se pudo abrir la fuente.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [stop.sourceId]);
+
+  return <div className="source-backdrop" role="presentation" onClick={onClose}>
+    <section className="source-sheet" role="dialog" aria-modal="true" aria-labelledby="source-title" onClick={(event) => event.stopPropagation()}>
+      <button className="sheet-close" type="button" aria-label="Cerrar" onClick={onClose}>×</button>
+      <div className="source-title-row">
+        <div><h2 id="source-title">Fuente original</h2><p>{source?.name ?? "Documento"}{stop.sourcePage ? ` · página ${stop.sourcePage}` : ""}{stop.sourceRow ? ` · fila visual ${stop.sourceRow}` : ""}</p></div>
+        <div className="source-zoom-controls" aria-label="Zoom de la fuente">
+          <button type="button" onClick={zoomOut} disabled={scale <= 1} aria-label="Alejar">−</button>
+          <button type="button" className="zoom-value" onClick={() => setScale(1)} aria-label="Restablecer zoom">{Math.round(scale * 100)}%</button>
+          <button type="button" onClick={zoomIn} disabled={scale >= 4} aria-label="Acercar">＋</button>
+        </div>
+      </div>
+      {loading && <div className="source-loading">Abriendo…</div>}
+      {error && <div className="source-error">{error}</div>}
+      {source?.kind === "image" && imageUrl && <div className="source-viewport"><div className="source-zoom-content" style={{ width: `${scale * 100}%` }}>
+        <div className="source-image-frame"><img src={imageUrl} alt={`Fuente de ${stop.address}`} />
+        {Number.isFinite(stop.sourceTop) && Number.isFinite(stop.sourceBottom) && <div
+          ref={imageHighlightRef}
+          className="source-row-highlight"
+          style={{ top: `${Math.max(0, stop.sourceTop!) * 100}%`, height: `${Math.max(0.025, stop.sourceBottom! - stop.sourceTop!) * 100}%` }}
+        />}
+        </div>
+      </div></div>}
+      {source?.kind === "pdf" && <PdfSourcePage source={source} stop={stop} scale={scale} />}
+    </section>
+  </div>;
+ }
+
  export default function RutaPostalHome() {
   const imagePicker = useRef<HTMLInputElement>(null);
   const universalPicker = useRef<HTMLInputElement>(null);
@@ -299,14 +494,17 @@ import {
   const [manualLocationKey, setManualLocationKey] = useState("junin-6000");
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [ocrMode, setOcrMode] = useState<OcrModeChoice>("fast");
+  const [ocrProgress, setOcrProgress] = useState<OcrProgressState | null>(null);
   const [origin, setOrigin] = useState<{ lat: number; lon: number }>();
-  const [activeLocationKey, setActiveLocationKey] = useState("");
+  const [activeLocationKey, setActiveLocationKey] = useState(ALL_LOCATIONS_KEY);
   const [message, setMessage] = useState("");
   const [coordinateStopId, setCoordinateStopId] = useState<string | null>(null);
   const [coordinateText, setCoordinateText] = useState("");
   const [editStopId, setEditStopId] = useState<string | null>(null);
   const [editAddress, setEditAddress] = useState("");
   const [editLocationKey, setEditLocationKey] = useState("junin-6000");
+  const [sourceStopId, setSourceStopId] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -334,15 +532,18 @@ import {
   }, [stops]);
 
   useEffect(() => {
-    if (!localityGroups.length) { setActiveLocationKey(""); return; }
-    if (!localityGroups.some((group) => group.key === activeLocationKey)) setActiveLocationKey(localityGroups[0].key);
+    if (!localityGroups.length) { setActiveLocationKey(ALL_LOCATIONS_KEY); return; }
+    if (activeLocationKey !== ALL_LOCATIONS_KEY && !localityGroups.some((group) => group.key === activeLocationKey)) setActiveLocationKey(ALL_LOCATIONS_KEY);
   }, [localityGroups, activeLocationKey]);
 
   async function geocode(list: Stop[]) {
     const pending = list.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
     if (!pending.length) return;
     setBusy(true);
-    setMessage(`Ubicando ${pending.length} dirección${pending.length === 1 ? "" : "es"} de ${locationByKey(pending[0].locationKey).label}…`);
+    const locationCount = new Set(pending.map((stop) => stop.locationKey)).size;
+    setMessage(locationCount === 1
+      ? `Ubicando ${pending.length} dirección${pending.length === 1 ? "" : "es"} de ${locationByKey(pending[0].locationKey).label}…`
+      : `Ubicando ${pending.length} direcciones de ${locationCount} ciudades…`);
     try {
       const response = await fetch("/api/geocode", {
         method: "POST",
@@ -356,7 +557,7 @@ import {
         const geo = byId.get(stop.id);
         return geo ? { ...stop, address: geo.normalizedAddress || stop.address, lat: geo.lat, lon: geo.lon, precision: geo.precision, reason: geo.reason, corrections: geo.corrections } : stop;
       }));
-      setMessage(`${locationByKey(pending[0].locationKey).label}: ubicación terminada.`);
+      setMessage(locationCount === 1 ? `${locationByKey(pending[0].locationKey).label}: ubicación terminada.` : `${locationCount} ciudades unificadas: ubicación terminada.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudieron ubicar las direcciones.");
     } finally { setBusy(false); }
@@ -364,7 +565,7 @@ import {
 
   async function activateLocation(key: string, rows?: Stop[]) {
     setActiveLocationKey(key);
-    const list = rows ?? stops.filter((stop) => stop.locationKey === key);
+    const list = rows ?? (key === ALL_LOCATIONS_KEY ? stops : stops.filter((stop) => stop.locationKey === key));
     await geocode(list);
   }
 
@@ -380,10 +581,10 @@ import {
       const created = transferToStops(parsed, stops);
       if (!created.length) { setMessage(`El manifiesto ${parsed.manifestNumber || "sin número"} ya estaba incorporado.`); return; }
       setStops((previous) => [...previous, ...created]);
-      const firstKey = created[0].locationKey;
-      setActiveLocationKey(firstKey);
-      setMessage(`${created.length} envíos importados desde OCR. ${new Set(created.map((row) => row.locationKey)).size} localidad(es) detectadas.`);
-      void geocode(created.filter((row) => row.locationKey === firstKey));
+      setActiveLocationKey(ALL_LOCATIONS_KEY);
+      const cityCount = new Set(created.map((row) => row.locationKey)).size;
+      setMessage(`${created.length} envíos importados desde OCR. ${cityCount} ciudad${cityCount === 1 ? "" : "es"} unificada${cityCount === 1 ? "" : "s"} en una sola ruta.`);
+      void geocode(created);
     } catch {
       localStorage.removeItem(ROUTE_TRANSFER_KEY);
       localStorage.removeItem(LEGACY_ROUTE_TRANSFER_KEY);
@@ -396,11 +597,10 @@ import {
   async function importRows(created: Stop[], sourceLabel: string) {
     if (!created.length) return;
     setStops((previous) => [...previous, ...created]);
-    const firstKey = created[0].locationKey;
-    setActiveLocationKey(firstKey);
+    setActiveLocationKey(ALL_LOCATIONS_KEY);
     const groups = new Set(created.map((row) => row.locationKey)).size;
-    setMessage(`${created.length} envíos cargados desde ${sourceLabel}. ${groups} localidad${groups === 1 ? "" : "es"}; sólo se carga el primer mapa.`);
-    await geocode(created.filter((row) => row.locationKey === firstKey));
+    setMessage(`${created.length} envíos cargados desde ${sourceLabel}. ${groups} ciudad${groups === 1 ? "" : "es"} en una sola ruta.`);
+    await geocode(created);
   }
 
   async function addManual() {
@@ -415,38 +615,165 @@ import {
       ? tableRows
       : freeRows.map((row, index) => ({ ...row, packageNo: start + index + 1, name: "" }));
     const created = sourceRows.map((row, index) => {
-      const analysis = analyzeCatalogAddress(row.address, row.locationKey);
+      const canonical = canonicalizeLocation(row.locality, row.postalCode, row.locationKey);
+      const analysis = analyzeCatalogAddress(row.address, canonical.locationKey);
       return {
         id: crypto.randomUUID(), loadOrder: start + index + 1, packageNo: row.packageNo || start + index + 1, name: row.name,
-        rawAddress: row.address, address: analysis.correctedAddress, locality: row.locality, postalCode: row.postalCode,
-        locationKey: row.locationKey, status: "pending" as Status, corrections: analysis.corrections,
+        rawAddress: row.address, address: analysis.correctedAddress, locality: canonical.locality, postalCode: canonical.postalCode,
+        locationKey: canonical.locationKey, status: "pending" as Status, corrections: analysis.corrections,
       } satisfies Stop;
     });
     setText("");
     await importRows(created, tableRows.length ? "tabla pegada" : "direcciones manuales");
   }
 
+  function approximateOcrBand(rows: OcrRow[], row: OcrRow) {
+    const pageRows = rows.filter((item) => item.page === row.page);
+    const index = Math.max(0, pageRows.findIndex((item) => item.id === row.id));
+    if (Number.isFinite(row.sourceTop) && Number.isFinite(row.sourceBottom) && row.sourceBottom! > row.sourceTop!) {
+      return { top: row.sourceTop! / 1000, bottom: row.sourceBottom! / 1000, visualRow: index + 1 };
+    }
+    // Último recurso: mantener el orden visual, nunca el número leído/circulado.
+    const count = Math.max(1, pageRows.length);
+    const usableTop = 0.08;
+    const usableBottom = 0.94;
+    const band = (usableBottom - usableTop) / count;
+    return { top: usableTop + index * band, bottom: usableTop + (index + 1) * band, visualRow: index + 1 };
+  }
+
+  async function estimateImageBands(file: File, pageRows: OcrRow[]) {
+    const fallback = new Map(pageRows.map((row) => [row.id, approximateOcrBand(pageRows, row)]));
+    if (!pageRows.length || typeof createImageBitmap !== "function") return fallback;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const targetWidth = Math.min(640, bitmap.width);
+      const scale = targetWidth / bitmap.width;
+      const targetHeight = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) { bitmap.close(); return fallback; }
+      context.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+      bitmap.close();
+      const pixels = context.getImageData(0, 0, targetWidth, targetHeight).data;
+      const x0 = Math.floor(targetWidth * 0.05);
+      const x1 = Math.ceil(targetWidth * 0.95);
+      const width = Math.max(1, x1 - x0);
+      const darkFraction = new Float32Array(targetHeight);
+      for (let y = 0; y < Math.min(targetHeight, Math.ceil(targetHeight * 0.45)); y++) {
+        let dark = 0;
+        for (let x = x0; x < x1; x += 2) {
+          const offset = (y * targetWidth + x) * 4;
+          const lum = pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114;
+          if (lum < 100) dark++;
+        }
+        darkFraction[y] = dark / Math.ceil(width / 2);
+      }
+
+      // El encabezado negro del manifiesto es la última banda oscura ancha antes de las filas.
+      const groups: Array<{ start: number; end: number; peak: number }> = [];
+      let start = -1;
+      let peak = 0;
+      const topLimit = Math.min(targetHeight, Math.ceil(targetHeight * 0.45));
+      for (let y = 0; y < topLimit; y++) {
+        const active = darkFraction[y] >= 0.28;
+        if (active && start < 0) { start = y; peak = darkFraction[y]; }
+        else if (active) peak = Math.max(peak, darkFraction[y]);
+        else if (start >= 0) {
+          if (y - start >= 5 && peak >= 0.62) groups.push({ start, end: y - 1, peak });
+          start = -1; peak = 0;
+        }
+      }
+      if (start >= 0 && topLimit - start >= 5 && peak >= 0.62) groups.push({ start, end: topLimit - 1, peak });
+      const header = groups.at(-1);
+      if (!header) return fallback;
+
+      // Las líneas horizontales se repiten con una separación casi constante. Usarlas sólo
+      // para estimar la altura física de una fila; así funciona aun si faltan algunas líneas.
+      const coverage = new Float32Array(targetHeight);
+      for (let y = Math.min(targetHeight - 1, header.end + 4); y < Math.floor(targetHeight * 0.86); y++) {
+        let covered = 0;
+        for (let x = x0; x < x1; x += 2) {
+          let isDark = false;
+          for (let dy = -2; dy <= 2 && !isDark; dy++) {
+            const yy = Math.max(0, Math.min(targetHeight - 1, y + dy));
+            const offset = (yy * targetWidth + x) * 4;
+            const lum = pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114;
+            isDark = lum < 150;
+          }
+          if (isDark) covered++;
+        }
+        coverage[y] = covered / Math.ceil(width / 2);
+      }
+      const peaks: number[] = [];
+      for (let y = header.end + 8; y < Math.floor(targetHeight * 0.84); y++) {
+        if (coverage[y] < 0.5 || coverage[y] < coverage[y - 1] || coverage[y] < coverage[y + 1]) continue;
+        if (!peaks.length || y - peaks.at(-1)! >= 6) peaks.push(y);
+        else if (coverage[y] > coverage[peaks.at(-1)!]) peaks[peaks.length - 1] = y;
+      }
+      const gaps = peaks.slice(1).map((value, index) => value - peaks[index]).filter((gap) => gap >= 20 && gap <= 56).sort((a, b) => a - b);
+      const aspectFallback = Math.max(24, Math.min(60, targetWidth * 0.074));
+      const rowHeight = gaps.length >= 2 ? gaps[Math.floor(gaps.length / 2)] : aspectFallback;
+      const firstTop = Math.min(targetHeight - 1, header.end + Math.max(2, targetHeight * 0.003));
+      const bands = new Map<string, { top: number; bottom: number; visualRow: number }>();
+      pageRows.forEach((row, index) => {
+        const top = Math.max(0, Math.min(0.985, (firstTop + index * rowHeight) / targetHeight));
+        const bottom = Math.max(top + 0.018, Math.min(0.995, (firstTop + (index + 1) * rowHeight) / targetHeight));
+        bands.set(row.id, { top, bottom, visualRow: index + 1 });
+      });
+      return bands;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function openSource(stop: Stop) {
+    if (!stop.sourceId) return;
+    setSourceStopId(stop.id);
+  }
+
   async function importPdf(file?: File) {
     if (!file) return;
     setBusy(true);
-    setMessage("Leyendo manifiesto PDF y normalizando sus columnas…");
+    setMessage("Leyendo PDF…");
     try {
       const parsed = await parseManifestPdf(file);
-      const start = Math.max(0, ...stops.map((stop) => stop.loadOrder));
-      const created = parsed.rows.map((row, index) => {
-        const analysis = analyzeCatalogAddress(row.address, row.locationKey);
-        return {
-          id: crypto.randomUUID(), loadOrder: start + index + 1, packageNo: row.packageNo, name: row.name,
-          rawAddress: row.address, address: analysis.correctedAddress, locality: row.locality, postalCode: row.postalCode,
-          locationKey: row.locationKey, status: "pending" as Status, corrections: analysis.corrections,
-          sourceManifest: parsed.manifestNumber, sourceRowId: `${row.packageNo}:${row.sourceCode ?? row.name}:${row.address}`,
-        } satisfies Stop;
-      });
-      if (!created.length) {
+      if (!parsed.rows.length) {
         const diagnostic = parsed.diagnostics ? ` Texto: ${parsed.diagnostics.textItems} bloques; localidades detectadas: ${parsed.diagnostics.localityMarkers}; estrategia: ${parsed.diagnostics.strategy}.` : "";
         throw new Error(`${parsed.warnings.join(" ") || "No se pudieron reconstruir envíos desde el PDF."}${diagnostic}`);
       }
-      await importRows(created, parsed.manifestNumber ? `PDF · manifiesto ${parsed.manifestNumber}` : "PDF");
+      const sourceId = await saveSourceFile(file, "pdf");
+      const startOrder = Math.max(0, ...stops.map((stop) => stop.loadOrder));
+      const manifest = parsed.manifestNumber ?? "";
+      const rows = parsed.rows.map((row, index) => {
+        const canonical = canonicalizeLocation(row.locality, row.postalCode, row.locationKey);
+        const analysis = analyzeCatalogAddress(row.address, canonical.locationKey);
+        const sourceRowId = `${row.packageNo}:${row.sourceCode ?? row.name}:${row.address}`;
+        return {
+          id: crypto.randomUUID(), loadOrder: startOrder + index + 1, packageNo: row.packageNo, name: row.name,
+          rawAddress: row.address, address: analysis.correctedAddress, locality: canonical.locality, postalCode: canonical.postalCode,
+          locationKey: canonical.locationKey, status: "pending" as Status, corrections: analysis.corrections,
+          sourceManifest: manifest, sourceRowId,
+          sourceKind: "pdf" as const, sourceId, sourcePage: row.sourcePage, sourceRow: row.packageNo,
+          sourceTop: row.sourceTop, sourceBottom: row.sourceBottom,
+        } satisfies Stop;
+      });
+
+      const existingKeys = new Set(stops.filter((stop) => stop.sourceRowId).map((stop) => `${stop.sourceManifest ?? ""}|${stop.sourceRowId}`));
+      const sourceByKey = new Map(rows.map((row) => [`${row.sourceManifest ?? ""}|${row.sourceRowId}`, row]));
+      let relinked = 0;
+      setStops((previous) => previous.map((stop) => {
+        if (!stop.sourceRowId) return stop;
+        const source = sourceByKey.get(`${stop.sourceManifest ?? ""}|${stop.sourceRowId}`);
+        if (!source) return stop;
+        relinked++;
+        return { ...stop, sourceKind: "pdf", sourceId, sourcePage: source.sourcePage, sourceRow: source.sourceRow, sourceTop: source.sourceTop, sourceBottom: source.sourceBottom };
+      }));
+
+      const created = rows.filter((row) => !existingKeys.has(`${row.sourceManifest ?? ""}|${row.sourceRowId}`));
+      if (created.length) await importRows(created, manifest ? `PDF · manifiesto ${manifest}` : "PDF");
+      else setMessage(`PDF asociado a ${relinked || rows.length} parada${(relinked || rows.length) === 1 ? "" : "s"}. Usá el botón de vista para abrir la fila original.`);
       if (parsed.warnings.length) setMessage((current) => `${current} ${parsed.warnings.join(" ")}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo leer el PDF.");
@@ -466,22 +793,57 @@ import {
     }
 
     setBusy(true);
-    setMessage(`Leyendo ${images.length} imagen${images.length === 1 ? "" : "es"} con OCR y preparando la ruta…`);
+    setOcrProgress({ percent: 2, label: "Preparando imágenes originales…", elapsedMs: 0, mode: ocrMode });
+    setMessage(ocrMode === "fast"
+      ? `Análisis rápido: leyendo ${images.length} imagen${images.length === 1 ? "" : "es"}…`
+      : `Análisis intenso: revisando ${images.length} imagen${images.length === 1 ? "" : "es"} con comprobaciones adicionales…`);
     try {
+      setOcrProgress({ percent: 4, label: "Enviando imágenes originales al OCR…", elapsedMs: 0, mode: ocrMode });
       const form = new FormData();
       images.forEach((file) => form.append("images", file, file.name));
-      form.append("mode", "maximum");
+      form.append("mode", ocrMode === "intense" ? "maximum" : "fast");
       const response = await fetch("/api/scan", { method: "POST", body: form });
-      const contentType = response.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) throw new Error("El servicio OCR devolvió una respuesta inválida.");
-      const result = await response.json() as OcrResult & { error?: string };
-      if (!response.ok) throw new Error(result.error || "No se pudo procesar el manifiesto con OCR.");
+      const result = await readOcrResponse(response, ocrMode, setOcrProgress);
       if (!result.rows.length) throw new Error("El OCR no encontró filas de envío en las imágenes.");
+      setOcrProgress({ percent: 98, label: "Preparando paradas y fuentes originales…", elapsedMs: 0, mode: ocrMode });
 
+      const sourceIds = await Promise.all(images.map((file) => saveSourceFile(file, "image")));
       const payload = buildRouteTransfer(result);
-      const created = transferToStops(payload, stops);
+      const ocrBySourceRow = new Map(result.rows.map((row) => [
+        `${row.page}:${row.rowNumber}:${row.barcode || `${row.name}|${row.address}`}`,
+        row,
+      ]));
+      const bandsByPage = new Map<number, Map<string, { top: number; bottom: number; visualRow: number }>>();
+      for (let page = 1; page <= images.length; page++) {
+        const pageRows = result.rows.filter((row) => row.page === page);
+        bandsByPage.set(page, await estimateImageBands(images[page - 1], pageRows));
+      }
+      const sourceMeta = new Map(result.rows.map((row) => {
+        const sourceRowId = `${row.page}:${row.rowNumber}:${row.barcode || `${row.name}|${row.address}`}`;
+        const band = bandsByPage.get(row.page)?.get(row.id) ?? approximateOcrBand(result.rows, row);
+        return [sourceRowId, {
+          sourceKind: "image" as const,
+          sourceId: sourceIds[row.page - 1],
+          sourcePage: row.page,
+          sourceRow: band.visualRow,
+          sourceTop: band.top,
+          sourceBottom: band.bottom,
+        }];
+      }));
+      let relinked = 0;
+      setStops((previous) => previous.map((stop) => {
+        if (!stop.sourceRowId || (stop.sourceManifest ?? "") !== payload.manifestNumber) return stop;
+        const meta = sourceMeta.get(stop.sourceRowId);
+        if (!meta) return stop;
+        relinked++;
+        return { ...stop, ...meta };
+      }));
+      const created = transferToStops(payload, stops).map((stop) => {
+        const meta = stop.sourceRowId ? sourceMeta.get(stop.sourceRowId) : undefined;
+        return meta ? { ...stop, ...meta } : stop;
+      });
       if (!created.length) {
-        setMessage(`El manifiesto ${result.manifestNumber || "sin número"} ya estaba incorporado.`);
+        setMessage(`Imágenes asociadas a ${relinked || result.rows.length} parada${(relinked || result.rows.length) === 1 ? "" : "s"}. Usá el botón de vista para abrir la fila original.`);
         return;
       }
       const reviewCount = result.rows.filter((row) => row.status === "review").length;
@@ -493,6 +855,7 @@ import {
       setMessage(error instanceof Error ? error.message : "No se pudieron leer las imágenes.");
     } finally {
       setBusy(false);
+      window.setTimeout(() => setOcrProgress(null), 1200);
       if (imagePicker.current) imagePicker.current.value = "";
     }
   }
@@ -552,8 +915,9 @@ import {
   function clearAll() {
     if (!stops.length || confirm("¿Borrar todos los envíos y mapas?")) {
       setStops([]);
-      setActiveLocationKey("");
+      setActiveLocationKey(ALL_LOCATIONS_KEY);
       setMessage("");
+      void clearSourceFiles().catch(() => undefined);
     }
   }
 
@@ -590,23 +954,21 @@ import {
   }
 
   const activeGroup = localityGroups.find((group) => group.key === activeLocationKey);
-  const activeStops = activeGroup?.rows ?? [];
+  const showingAllLocations = activeLocationKey === ALL_LOCATIONS_KEY;
+  const activeStops = showingAllLocations ? stops : activeGroup?.rows ?? [];
   const activeMapped = activeStops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
   const activeMissing = activeStops.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
   const optimized = useMemo(() => optimize(activeStops, origin), [activeStops, origin]);
   const display = [...optimized, ...activeMissing];
-  const waitingCount = stops.length - activeStops.length;
 
   function exportRoute() {
     const rows = [["Nº de paquete", "Nombre", "Dirección", "Localidad", "CP", "Parada", "Estado", "Precisión", "Lat", "Lon"].map(csv).join(";")];
-    for (const group of localityGroups) {
-      const ordered = optimize(group.rows, origin);
-      const missing = group.rows.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
-      [...ordered, ...missing].forEach((stop, index) => rows.push([
-        stop.packageNo, stop.name, stop.address, stop.locality, stop.postalCode,
-        Number.isFinite(stop.lat) ? index + 1 : "", stop.status, stop.precision, stop.lat, stop.lon,
-      ].map(csv).join(";")));
-    }
+    const ordered = optimize(stops, origin);
+    const missing = stops.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
+    [...ordered, ...missing].forEach((stop, index) => rows.push([
+      stop.packageNo, stop.name, stop.address, stop.locality, stop.postalCode,
+      Number.isFinite(stop.lat) ? index + 1 : "", stop.status, stop.precision, stop.lat, stop.lon,
+    ].map(csv).join(";")));
     const blob = new Blob(["\ufeff" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob);
@@ -615,15 +977,17 @@ import {
     URL.revokeObjectURL(anchor.href);
   }
 
-  const nextGroup = localityGroups.find((group) => group.key !== activeLocationKey && group.rows.some((row) => row.status === "pending"));
-
   const coordinateStop = coordinateStopId ? stops.find((stop) => stop.id === coordinateStopId) : undefined;
+  const sourceStop = sourceStopId ? stops.find((stop) => stop.id === sourceStopId) : undefined;
 
   return <main className="ruta-postal">
     <nav className="app-bar" aria-label="Ruta Envíos">
       <div className="brand-lockup">
         <span className="brand-mark" aria-hidden="true">R</span>
-        <span><strong>Ruta Envíos</strong><small>Planificador de reparto</small></span>
+        <span className="brand-copy">
+          <strong>Ruta Envíos</strong>
+          <small className="app-version">v{APP_VERSION}</small>
+        </span>
       </div>
       <div className="top-actions">
         <InstallPwa />
@@ -634,10 +998,7 @@ import {
 
     <section className="workspace">
       <section className="panel input-panel" id="cargar">
-        <div className="section-title">
-          <div><span className="section-kicker">NUEVA RUTA</span><h1>Cargar paradas</h1></div>
-          <b className="route-count">{stops.length}</b>
-        </div>
+        <div className="section-title"><h1>Cargar</h1><b className="route-count">{stops.length}</b></div>
 
         <div className="manual-location">
           <label htmlFor="manual-location">Localidad por defecto</label>
@@ -663,50 +1024,61 @@ import {
           onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !busy) universalPicker.current?.click(); }}
         >
           <span className="drop-icon" aria-hidden="true">＋</span>
-          <strong>Soltá archivos acá</strong>
-          <small>PDF o imágenes</small>
+          <strong>PDF o imágenes</strong>
         </div>
         <input ref={universalPicker} type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => { void importFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
+
+        <div className="ocr-mode-row" aria-label="Modo de análisis OCR">
+          <span>Análisis OCR</span>
+          <div className="ocr-mode-toggle" role="group" aria-label="Intensidad del OCR">
+            <button type="button" className={ocrMode === "fast" ? "active" : ""} disabled={busy} onClick={() => setOcrMode("fast")}>Rápido</button>
+            <button type="button" className={ocrMode === "intense" ? "active" : ""} disabled={busy} onClick={() => setOcrMode("intense")}>Intenso</button>
+          </div>
+        </div>
 
         <div className="file-actions">
           <label className="secondary-action">PDF<input type="file" accept="application/pdf" hidden disabled={busy} onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>
           <button className="secondary-action" type="button" disabled={busy} onClick={() => imagePicker.current?.click()}>Imágenes</button>
           <input ref={imagePicker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
         </div>
+        {ocrProgress && <div className="ocr-progress" aria-live="polite" aria-busy={busy}>
+          <div className="ocr-progress-head"><span><b>{ocrProgress.mode === "fast" ? "Rápido" : "Intenso"}</b> · {ocrProgress.label}</span><strong>{Math.round(ocrProgress.percent)}%</strong></div>
+          <div className="ocr-progress-track"><i style={{ width: `${ocrProgress.percent}%` }} /></div>
+          <small>{busy ? `Activo · ${Math.floor(ocrProgress.elapsedMs / 60000).toString().padStart(2, "0")}:${Math.floor((ocrProgress.elapsedMs % 60000) / 1000).toString().padStart(2, "0")} transcurrido` : "Completado"}</small>
+        </div>}
         {message && <p className="message" aria-live="polite">{message}</p>}
       </section>
 
       <section className="panel map-panel" id="mapa">
         <div className="map-toolbar">
-          <div>
-            <span className="section-kicker">MAPA</span>
-            <h2>{activeGroup ? activeGroup.location.label : "Sin localidad activa"}</h2>
-          </div>
+          <h2>{showingAllLocations ? "Todas las ciudades" : activeGroup ? activeGroup.location.label : "Mapa"}</h2>
           <div className="map-meta">
             <span><b>{activeMapped.length}</b> ubicadas</span>
             <span><b>{activeMissing.length}</b> pendientes</span>
           </div>
         </div>
         <MapView stops={optimized} origin={origin} />
-        {nextGroup && <button className="next-location" disabled={busy} onClick={() => void activateLocation(nextGroup.key)}>Siguiente localidad · {nextGroup.location.label} →</button>}
       </section>
     </section>
 
-    {localityGroups.length > 0 && <section className="locality-strip" aria-label="Localidades">
+    {localityGroups.length > 0 && <section className="locality-strip" aria-label="Ciudades de la ruta">
+      <button className={`locality-chip unified ${showingAllLocations ? "active" : ""}`} disabled={busy && !showingAllLocations} onClick={() => void activateLocation(ALL_LOCATIONS_KEY)}>
+        <span>∞</span><b>Todas</b><small>{stops.length} · ruta unificada</small>
+      </button>
       {localityGroups.map((group, index) => {
         const active = group.key === activeLocationKey;
         const mappedCount = group.rows.filter((row) => Number.isFinite(row.lat) && Number.isFinite(row.lon)).length;
         return <button key={group.key} className={`locality-chip ${active ? "active" : ""}`} disabled={busy && !active} onClick={() => void activateLocation(group.key)}>
           <span>{String(index + 1).padStart(2, "0")}</span>
           <b>{group.location.label}</b>
-          <small>{group.rows.length} · {active ? "activo" : mappedCount === group.rows.length && mappedCount > 0 ? "listo" : "espera"}</small>
+          <small>{group.rows.length} · {active ? "filtro" : mappedCount === group.rows.length && mappedCount > 0 ? "lista" : "pendiente"}</small>
         </button>;
       })}
     </section>}
 
     <section className="panel route-panel" id="paradas">
       <div className="route-toolbar">
-        <div><span className="section-kicker">PARADAS</span><h2>{activeGroup ? activeGroup.location.label : "Envíos"}</h2></div>
+        <h2>{showingAllLocations ? "Ruta unificada" : activeGroup ? activeGroup.location.label : "Paradas"}</h2>
         <div className="route-actions">
           <span>{display.length} paradas</span>
           <button className="secondary-action compact-action" onClick={exportRoute}>CSV</button>
@@ -716,9 +1088,15 @@ import {
         {display.map((stop, index) => <article className={`stop-card ${stop.precision && stop.precision !== "exact" && stop.precision !== "manual" ? "approx" : ""}`} key={stop.id}>
           <div className="stop-number">{Number.isFinite(stop.lat) ? index + 1 : "!"}</div>
           <div className="stop-main">
-            <div className="stop-heading"><b>{stop.address}</b><button className="edit-address-link" type="button" onClick={() => openAddressEditor(stop)} aria-label={`Editar dirección ${stop.address}`}>Editar</button><span>{stop.locality || locationByKey(stop.locationKey).label} · {stop.postalCode}</span></div>
+            <div className="stop-heading"><span className="stop-address">{stop.address}</span>{stop.sourceId && <button
+              className="source-eye"
+              type="button"
+              title="Ver fila original"
+              aria-label={`Ver fila original de ${stop.address}`}
+              onClick={() => openSource(stop)}
+            ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.2 12s3.5-6 9.8-6 9.8 6 9.8 6-3.5 6-9.8 6-9.8-6-9.8-6Zm9.8 3.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Zm0-1.7A1.55 1.55 0 1 1 12 10.45a1.55 1.55 0 0 1 0 3.1Z"/></svg></button>}<button className="edit-address-link" type="button" onClick={() => openAddressEditor(stop)} aria-label={`Editar dirección ${stop.address}`}>Editar</button><span>{stop.locality || locationByKey(stop.locationKey).label} · {stop.postalCode}</span></div>
             {(stop.name || stop.packageNo) && <div className="stop-subline">{stop.packageNo && <span>#{stop.packageNo}</span>}{stop.name && <span>{stop.name}</span>}</div>}
-            {stop.reason && <p className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</p>}
+            {stop.reason && stop.precision !== "exact" && stop.precision !== "manual" && <p className={`reason ${stop.precision ?? "missing"}`}>{stop.reason}</p>}
             {(!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) && <div className="location-fallback"><button type="button" disabled={busy} onClick={() => void geocode([stop])}>Reintentar</button><button type="button" onClick={() => openAddressEditor(stop)}>Corregir dirección</button><a href={googleMapsSearch(stop)} target="_blank" rel="noreferrer">Google Maps</a><button type="button" onClick={() => openCoordinateEditor(stop)}>Pegar coordenadas</button></div>}
           </div>
           <div className="stop-controls">
@@ -726,7 +1104,7 @@ import {
             <button type="button" onClick={() => openAddressEditor(stop)}>Editar dirección</button>
           </div>
         </article>)}
-        {!display.length && <div className="empty-state"><span aria-hidden="true">⌖</span><b>Sin paradas todavía</b><small>Cargá direcciones, un PDF o imágenes.</small></div>}
+        {!display.length && <div className="empty-state"><span aria-hidden="true">⌖</span><b>Sin paradas</b></div>}
       </div>
     </section>
 
@@ -762,6 +1140,8 @@ import {
         </div>
       </section>
     </div>}
+
+    {sourceStop && <SourceViewer stop={sourceStop} onClose={() => setSourceStopId(null)} />}
 
     <nav className="mobile-dock" aria-label="Secciones">
       <a href="#cargar"><span>＋</span>Cargar</a>

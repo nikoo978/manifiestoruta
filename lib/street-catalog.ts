@@ -45,7 +45,13 @@ const MANUAL_ALIASES: Record<string, string> = {
   "RIVADAVIA": "AV RIVADAVIA",
   "ARIAS": "AV J L ARIAS",
   "J L ARIAS": "AV J L ARIAS",
-  "JOSE LUIS ARIAS": "AV J L ARIAS"
+  "J I ARIAS": "AV J L ARIAS",
+  "JOSE L ARIAS": "AV J L ARIAS",
+  "JOSE I ARIAS": "AV J L ARIAS",
+  "JOSE LUIS ARIAS": "AV J L ARIAS",
+  "AV JOSE I ARIAS": "AV J L ARIAS",
+  "F CABRERA": "CABRERA",
+  "FRANCISCO CABRERA": "CABRERA"
 };
 
 export function normalizeText(value: string) {
@@ -99,7 +105,8 @@ function similarity(a: string, b: string) {
 
 export function streetsForLocation(locationKey: string) {
   const loc = locationByKey(locationKey);
-  const rows = RECORDS.filter((r) => r.department === loc.department && (!loc.locality || r.locality === loc.locality));
+  const catalogLocality = loc.georefLocality ?? loc.locality;
+  const rows = RECORDS.filter((r) => r.department === loc.department && (!catalogLocality || normalizeText(r.locality) === normalizeText(catalogLocality)));
   const byName = new Map<string, StreetRecord>();
   for (const row of rows) {
     const key = `${row.locality}|${row.name}`;
@@ -145,9 +152,13 @@ function splitBetween(input: string) {
 export function analyzeCatalogAddress(input: string, locationKey: string): AddressAnalysis {
   const cleaned = input.replace(/\s+/g, " ").trim();
   const { main, refs } = splitBetween(cleaned);
-  const numberMatch = main.match(/\b(\d{1,6})\b/);
-  const height = numberMatch ? Number(numberMatch[1]) : undefined;
-  const streetInput = (numberMatch ? main.slice(0, numberMatch.index).trim() : main).replace(/[-,]+$/g, "").trim();
+  const numberMatches = [...main.matchAll(/\b(\d{1,6})\b/g)];
+  // La altura suele ser el último número. Esto evita interpretar "25" como
+  // altura en "AV 25 DE MAYO 615" o "12" en "12 DE OCTUBRE 759".
+  const lastNumber = numberMatches.at(-1);
+  const routeOnlyNumber = /^\s*(?:RUTA|RN|RP)\s+\d{1,4}\s*$/i.test(main);
+  const height = lastNumber && !routeOnlyNumber ? Number(lastNumber[1]) : undefined;
+  const streetInput = (lastNumber && !routeOnlyNumber ? main.slice(0, lastNumber.index).trim() : main).replace(/[-,]+$/g, "").trim();
   const mainMatch = bestStreetMatch(streetInput, locationKey);
   const corrections: AddressAnalysis["corrections"] = [];
   let mainStreet = streetInput;

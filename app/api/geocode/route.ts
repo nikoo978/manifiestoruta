@@ -8,68 +8,49 @@ type Result = {
   lat?: number;
   lon?: number;
   precision: Precision;
-  source: "georef" | "nominatim" | "photon" | "overpass" | "none";
+  source: "georef" | "photon" | "nominatim" | "overpass" | "none";
   reason: string;
   normalizedAddress: string;
   locality: string;
   corrections?: unknown[];
 };
 
-type PhotonHit = Point & {
-  name: string;
-  street: string;
-  city: string;
-  district: string;
-  postcode: string;
-  housenumber: string;
-};
-
-type NominatimHit = Point & {
-  displayName: string;
+type SearchHit = Point & {
   road: string;
-  houseNumber: string;
-  city: string;
-  county: string;
+  place: string;
   postcode: string;
-  type: string;
+  houseNumber: string;
+  label: string;
 };
 
-const ua = {
-  "User-Agent": "RutaEnvios/1.9 (delivery route planner; contact via application owner)",
+type OsmWay = {
+  id?: number;
+  tags?: { name?: string };
+  nodes?: number[];
+  geometry?: Array<{ lat: number; lon: number }>;
+};
+
+const HEADERS = {
+  "User-Agent": "RutaEnvios/2.0 (delivery route planner)",
   "Accept-Language": "es-AR,es;q=0.9,en;q=0.4",
 };
 
-let lastNominatimRequest = 0;
-const nominatimCache = new Map<string, unknown>();
-
-async function fetchNominatim(qs: URLSearchParams) {
-  const key = qs.toString();
-  if (nominatimCache.has(key)) return nominatimCache.get(key);
-  const elapsed = Date.now() - lastNominatimRequest;
-  if (elapsed < 1050) await new Promise((resolve) => setTimeout(resolve, 1050 - elapsed));
-  lastNominatimRequest = Date.now();
-  const data = await fetchNominatim(qs);
-  nominatimCache.set(key, data);
-  if (nominatimCache.size > 200) nominatimCache.delete(nominatimCache.keys().next().value as string);
-  return data;
-}
-
-async function fetchJson(url: string, init?: RequestInit, timeout = 9000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeout);
+async function fetchJson(url: string, init?: RequestInit, timeout = 12000): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
   try {
     const response = await fetch(url, {
       ...init,
-      signal: ctrl.signal,
-      headers: { ...ua, ...(init?.headers || {}) },
+      signal: controller.signal,
       cache: "no-store",
+      headers: { ...HEADERS, ...(init?.headers ?? {}) },
     });
     if (!response.ok) return null;
     return await response.json();
   } catch {
     return null;
   } finally {
-    clearTimeout(t);
+    clearTimeout(timer);
   }
 }
 
@@ -77,316 +58,374 @@ function unique(values: string[]) {
   return [...new Set(values.map((value) => value.replace(/\s+/g, " ").trim()).filter(Boolean))];
 }
 
-function localityMatches(value: string, locationKey: string) {
-  if (!value) return false;
+function samePlace(value: string, locationKey: string) {
   const loc = locationByKey(locationKey);
   const haystack = normalizeText(value);
   const locality = normalizeText(loc.locality ?? "");
   const department = normalizeText(loc.department);
-  if (locality && haystack.includes(locality)) return true;
-  return haystack.includes(department);
+  return Boolean((locality && haystack.includes(locality)) || (department && haystack.includes(department)));
 }
 
-async function georefQuery(address: string, locationKey: string, mode: "locality" | "department" | "loose"): Promise<Point | null> {
+function sameStreet(found: string, wanted: string) {
+  const a = normalizeText(found).replace(/^AV /, "").trim();
+  const b = normalizeText(wanted).replace(/^AV /, "").trim();
+  return Boolean(a && b && (a === b || a.includes(b) || b.includes(a)));
+}
+
+async function georefOne(address: string, locationKey: string, scope: "locality" | "department" | "loose"): Promise<Point | null> {
   const loc = locationByKey(locationKey);
-  const qs = new URLSearchParams({ direccion: address, provincia: "Buenos Aires", max: "3", campos: "completo" });
-  if (mode !== "loose") qs.set("departamento", loc.department);
-  if (mode === "locality" && loc.locality) {
+  const qs = new URLSearchParams({ direccion: address, provincia: "Buenos Aires", max: "5", campos: "completo" });
+  if (scope !== "loose") qs.set("departamento", loc.department);
+  if (scope === "locality" && loc.locality) {
     if (loc.localityId) qs.set("localidad_censal", loc.locality);
     else qs.set("localidad", loc.locality);
   }
   const data = await fetchJson(`https://apis.datos.gob.ar/georef/api/direcciones?${qs}`);
-  const hits = Array.isArray(data?.direcciones) ? data.direcciones : [];
-  for (const item of hits) {
-    const point = item?.ubicacion;
-    if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lon)) continue;
-    const label = [item?.localidad_censal?.nombre, item?.localidad?.nombre, item?.departamento?.nombre].filter(Boolean).join(" ");
-    if (mode === "loose" && label && !localityMatches(label, locationKey)) continue;
-    return { lat: Number(point.lat), lon: Number(point.lon) };
+  const rows = Array.isArray(data?.direcciones) ? data.direcciones : [];
+  for (const row of rows) {
+    const lat = Number(row?.ubicacion?.lat);
+    const lon = Number(row?.ubicacion?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const place = [row?.localidad_censal?.nombre, row?.localidad?.nombre, row?.departamento?.nombre].filter(Boolean).join(" ");
+    if (scope === "loose" && place && !samePlace(place, locationKey)) continue;
+    return { lat, lon };
   }
   return null;
 }
 
-async function georef(addresses: string[], locationKey: string): Promise<{ point: Point; query: string } | null> {
+async function georef(addresses: string[], locationKey: string): Promise<Point | null> {
   const variants = unique(addresses);
   for (const address of variants) {
-    const local = await georefQuery(address, locationKey, "locality");
-    if (local) return { point: local, query: address };
-    const department = await georefQuery(address, locationKey, "department");
-    if (department) return { point: department, query: address };
+    const local = await georefOne(address, locationKey, "locality");
+    if (local) return local;
+    const department = await georefOne(address, locationKey, "department");
+    if (department) return department;
   }
-  // Último intento sin sobre-restringir el filtro. Se valida localidad/partido en la respuesta.
-  for (const address of variants.slice(0, 2)) {
-    const loose = await georefQuery(address, locationKey, "loose");
-    if (loose) return { point: loose, query: address };
+  for (const address of variants.slice(0, 3)) {
+    const loose = await georefOne(address, locationKey, "loose");
+    if (loose) return loose;
   }
   return null;
 }
 
-async function photon(query: string, locationKey: string, limit = 6): Promise<PhotonHit[]> {
+async function photon(query: string, locationKey: string, limit = 8): Promise<SearchHit[]> {
   const loc = locationByKey(locationKey);
   const place = loc.locality ?? loc.department;
   const qs = new URLSearchParams({ q: `${query}, ${place}, Buenos Aires, Argentina`, limit: String(limit), lang: "es" });
-  const data = await fetchJson(`https://photon.komoot.io/api/?${qs}`, undefined, 10000);
-  return (data?.features ?? []).map((feature: any) => ({
-    lat: Number(feature.geometry?.coordinates?.[1]),
-    lon: Number(feature.geometry?.coordinates?.[0]),
-    name: String(feature.properties?.name ?? ""),
-    street: String(feature.properties?.street ?? ""),
-    city: String(feature.properties?.city ?? feature.properties?.locality ?? feature.properties?.town ?? feature.properties?.village ?? ""),
-    district: String(feature.properties?.district ?? feature.properties?.county ?? ""),
-    postcode: String(feature.properties?.postcode ?? ""),
-    housenumber: String(feature.properties?.housenumber ?? ""),
-  })).filter((point: PhotonHit) => Number.isFinite(point.lat) && Number.isFinite(point.lon));
+  const data = await fetchJson(`https://photon.komoot.io/api/?${qs}`, undefined, 11000);
+  return (Array.isArray(data?.features) ? data.features : []).map((feature: any) => {
+    const p = feature?.properties ?? {};
+    return {
+      lat: Number(feature?.geometry?.coordinates?.[1]),
+      lon: Number(feature?.geometry?.coordinates?.[0]),
+      road: String(p.street ?? p.name ?? ""),
+      place: String(p.city ?? p.locality ?? p.town ?? p.village ?? p.district ?? p.county ?? ""),
+      postcode: String(p.postcode ?? ""),
+      houseNumber: String(p.housenumber ?? ""),
+      label: [p.name, p.street, p.city, p.locality, p.county].filter(Boolean).join(" "),
+    } satisfies SearchHit;
+  }).filter((hit: SearchHit) => Number.isFinite(hit.lat) && Number.isFinite(hit.lon));
 }
 
-function pickPhotonHit(hits: PhotonHit[], locationKey: string, street: string, height?: number) {
-  const streetNorm = normalizeText(street).replace(/^AV /, "");
+function bestHit(hits: SearchHit[], locationKey: string, street: string, height?: number) {
   const loc = locationByKey(locationKey);
   return hits.map((hit) => {
-    const placeText = `${hit.city} ${hit.district}`;
-    let score = localityMatches(placeText, locationKey) ? 3 : -3;
-    const hitStreet = normalizeText(`${hit.street} ${hit.name}`).replace(/^AV /, "");
-    if (hitStreet === streetNorm || hitStreet.includes(streetNorm) || streetNorm.includes(hitStreet)) score += 4;
+    let score = samePlace(`${hit.place} ${hit.label}`, locationKey) ? 5 : -8;
+    if (sameStreet(`${hit.road} ${hit.label}`, street)) score += 5;
     if (height) {
-      if (hit.housenumber === String(height)) score += 5;
-      else if (normalizeText(`${hit.name} ${hit.street}`).includes(String(height))) score += 2;
+      if (hit.houseNumber === String(height)) score += 7;
+      else if (normalizeText(hit.label).includes(String(height))) score += 2;
     }
-    if (hit.postcode && hit.postcode === loc.postalCode) score += 2;
+    if (hit.postcode && hit.postcode.startsWith(loc.postalCode)) score += 2;
     return { hit, score };
   }).sort((a, b) => b.score - a.score)[0];
 }
 
-async function nominatim(address: string, street: string, height: number | undefined, locationKey: string): Promise<NominatimHit | null> {
-  const loc = locationByKey(locationKey);
-  const candidates: URLSearchParams[] = [];
-  const structured = new URLSearchParams({
-    format: "jsonv2",
-    addressdetails: "1",
-    limit: "5",
-    countrycodes: "ar",
-    street: `${street}${height ? ` ${height}` : ""}`,
-    state: "Buenos Aires",
-  });
-  if (loc.locality) structured.set("city", loc.locality);
-  if (loc.postalCode) structured.set("postalcode", loc.postalCode);
-  candidates.push(structured);
-  candidates.push(new URLSearchParams({
-    format: "jsonv2",
-    addressdetails: "1",
-    limit: "5",
-    countrycodes: "ar",
-    q: `${address}, ${loc.locality ?? loc.department}, Buenos Aires, Argentina`,
-  }));
+let lastNominatim = 0;
+const nominatimCache = new Map<string, SearchHit[]>();
 
+async function nominatimQuery(qs: URLSearchParams): Promise<SearchHit[]> {
+  const key = qs.toString();
+  const cached = nominatimCache.get(key);
+  if (cached) return cached;
+  const elapsed = Date.now() - lastNominatim;
+  if (elapsed < 1100) await new Promise((resolve) => setTimeout(resolve, 1100 - elapsed));
+  lastNominatim = Date.now();
+  const data = await fetchJson(`https://nominatim.openstreetmap.org/search?${qs}`, undefined, 14000);
+  const rows: SearchHit[] = (Array.isArray(data) ? data : []).map((item: any) => {
+    const a = item?.address ?? {};
+    return {
+      lat: Number(item?.lat),
+      lon: Number(item?.lon),
+      road: String(a.road ?? a.pedestrian ?? a.residential ?? ""),
+      place: String(a.city ?? a.town ?? a.village ?? a.municipality ?? a.county ?? a.state_district ?? ""),
+      postcode: String(a.postcode ?? ""),
+      houseNumber: String(a.house_number ?? ""),
+      label: String(item?.display_name ?? ""),
+    };
+  }).filter((hit: SearchHit) => Number.isFinite(hit.lat) && Number.isFinite(hit.lon));
+  nominatimCache.set(key, rows);
+  if (nominatimCache.size > 150) {
+    const oldest = nominatimCache.keys().next().value;
+    if (oldest) nominatimCache.delete(oldest);
+  }
+  return rows;
+}
+
+async function nominatim(addresses: string[], street: string, height: number | undefined, locationKey: string): Promise<SearchHit | null> {
+  const loc = locationByKey(locationKey);
+  const place = loc.locality ?? loc.department;
+  const structured = new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "8", countrycodes: "ar", street: `${height ? `${height} ` : ""}${street}`.trim(), city: place, state: "Buenos Aires" });
+  if (loc.postalCode) structured.set("postalcode", loc.postalCode);
+  const candidates = [
+    structured,
+    ...addresses.slice(0, 3).map((address) => new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "8", countrycodes: "ar", q: `${address}, ${place}, Buenos Aires, Argentina` })),
+  ];
   for (const qs of candidates) {
-    const data = await fetchNominatim(qs);
-    if (!Array.isArray(data)) continue;
-    const scored = data.map((item: any) => {
-      const addr = item?.address ?? {};
-      const hit: NominatimHit = {
-        lat: Number(item?.lat),
-        lon: Number(item?.lon),
-        displayName: String(item?.display_name ?? ""),
-        road: String(addr.road ?? addr.pedestrian ?? addr.residential ?? ""),
-        houseNumber: String(addr.house_number ?? ""),
-        city: String(addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet ?? ""),
-        county: String(addr.county ?? addr.state_district ?? ""),
-        postcode: String(addr.postcode ?? ""),
-        type: String(item?.type ?? ""),
-      };
-      const placeText = `${hit.city} ${hit.county} ${hit.displayName}`;
-      let score = localityMatches(placeText, locationKey) ? 4 : -6;
-      const wantedStreet = normalizeText(street).replace(/^AV /, "");
-      const foundStreet = normalizeText(hit.road).replace(/^AV /, "");
-      if (foundStreet && (foundStreet === wantedStreet || foundStreet.includes(wantedStreet) || wantedStreet.includes(foundStreet))) score += 5;
-      if (height) {
-        if (hit.houseNumber === String(height)) score += 6;
-        else if (normalizeText(hit.displayName).includes(String(height))) score += 2;
-      }
-      if (hit.postcode && hit.postcode === loc.postalCode) score += 2;
-      if (["house", "building", "residential"].includes(hit.type)) score += 1;
-      return { hit, score };
-    }).filter((row: any) => Number.isFinite(row.hit.lat) && Number.isFinite(row.hit.lon)).sort((a: any, b: any) => b.score - a.score);
-    if (scored[0]?.score >= (height ? 7 : 5)) return scored[0].hit;
+    const best = bestHit(await nominatimQuery(qs), locationKey, street, height);
+    if (best?.hit && best.score >= (height ? 9 : 7)) return best.hit;
   }
   return null;
 }
 
-function distance(a: Point, b: Point) { const y = (a.lat - b.lat) * 111000, x = (a.lon - b.lon) * 111000 * Math.cos(a.lat * Math.PI / 180); return Math.hypot(x, y); }
-function bearing(a: Point, b: Point) { return Math.atan2((b.lon - a.lon) * Math.cos((a.lat + b.lat) * Math.PI / 360), b.lat - a.lat); }
-function angleDiff(a: number, b: number) { const d = Math.abs(a - b) % Math.PI; return Math.min(d, Math.PI - d); }
-function projectOnSegment(p: Point, a: Point, b: Point): Point {
-  const k = Math.cos(p.lat * Math.PI / 180), ax = a.lon * k, ay = a.lat, bx = b.lon * k, by = b.lat, px = p.lon * k, py = p.lat;
-  const dx = bx - ax, dy = by - ay, den = dx * dx + dy * dy || 1;
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / den));
-  return { lat: ay + t * dy, lon: (ax + t * dx) / k };
+function canonicalStreet(name: string, locationKey: string) {
+  const match = bestStreetMatch(name, locationKey);
+  return normalizeText(match?.street && match.score >= 0.50 ? match.street.name : name);
 }
 
-async function overpassWays(anchor: Point, radius = 500) {
-  const query = `[out:json][timeout:10];way(around:${radius},${anchor.lat},${anchor.lon})["highway"]["name"];out tags geom;`;
-  for (const endpoint of ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"]) {
-    const data = await fetchJson(endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }, body: new URLSearchParams({ data: query }) }, 12000);
-    if (data?.elements?.length) return data.elements;
+async function streetAnchor(street: string, locationKey: string): Promise<Point | null> {
+  const p = bestHit(await photon(street, locationKey, 10), locationKey, street);
+  if (p?.hit && p.score >= 7) return { lat: p.hit.lat, lon: p.hit.lon };
+  const osm = await nominatim([street], street, undefined, locationKey);
+  return osm ? { lat: osm.lat, lon: osm.lon } : null;
+}
+
+async function overpassWays(anchor: Point, radius = 6000): Promise<OsmWay[]> {
+  const query = `[out:json][timeout:18];way(around:${radius},${anchor.lat},${anchor.lon})["highway"]["name"];out body geom;`;
+  const endpoints = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  ];
+  for (const endpoint of endpoints) {
+    const data = await fetchJson(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+      body: new URLSearchParams({ data: query }),
+    }, 22000);
+    if (Array.isArray(data?.elements) && data.elements.length) return data.elements as OsmWay[];
   }
   return [];
 }
 
-function nearestSegment(way: any, p: Point) {
-  let best: any = null;
-  const geometry = way.geometry ?? [];
-  for (let i = 1; i < geometry.length; i++) {
-    const a = { lat: geometry[i - 1].lat, lon: geometry[i - 1].lon }, b = { lat: geometry[i].lat, lon: geometry[i].lon };
-    const q = projectOnSegment(p, a, b), d = distance(p, q);
-    if (!best || d < best.d) best = { a, b, q, d };
-  }
-  return best;
+function wayPoints(way: OsmWay): Point[] {
+  return (Array.isArray(way.geometry) ? way.geometry : [])
+    .map((p) => ({ lat: Number(p.lat), lon: Number(p.lon) }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
 }
 
-async function parallelFallback(street: string, height: number, locationKey: string): Promise<{ point: Point; reason: string } | null> {
-  const streetHits = await photon(street, locationKey, 4);
-  if (!streetHits[0]) return null;
-  const anchor = streetHits[0];
-  const ways = await overpassWays(anchor);
-  if (!ways.length) return null;
-  const targetNorm = normalizeText(street);
-  const targetWays = ways.filter((way: any) => normalizeText(way.tags?.name ?? "") === targetNorm || normalizeText(way.tags?.name ?? "").includes(targetNorm.replace(/^AV /, "")));
-  const target = targetWays.map((way: any) => ({ way, segment: nearestSegment(way, anchor) })).filter((row: any) => row.segment).sort((a: any, b: any) => a.segment.d - b.segment.d)[0];
-  if (!target) return null;
-  const targetAngle = bearing(target.segment.a, target.segment.b);
-  const candidates = ways.map((way: any) => ({ way, segment: nearestSegment(way, anchor) })).filter((row: any) => row.segment && normalizeText(row.way.tags?.name ?? "") !== targetNorm && row.segment.d < 420 && angleDiff(targetAngle, bearing(row.segment.a, row.segment.b)) < 0.28).sort((a: any, b: any) => a.segment.d - b.segment.d).slice(0, 8);
-  for (const candidate of candidates) {
-    const name = String(candidate.way.tags?.name ?? "");
-    const match = bestStreetMatch(name, locationKey);
-    const queryName = match?.street?.name ?? name;
-    const exact = await georef([`${queryName} ${height}`], locationKey);
-    if (!exact) continue;
-    const projected = nearestSegment(target.way, exact.point);
-    if (projected && projected.d < 650) return { point: projected.q, reason: `Altura ${height} estimada con ${name} y proyectada sobre ${street}.` };
+function meters(a: Point, b: Point) {
+  const y = (a.lat - b.lat) * 111000;
+  const x = (a.lon - b.lon) * 111000 * Math.cos(a.lat * Math.PI / 180);
+  return Math.hypot(x, y);
+}
+
+function matchingWays(ways: OsmWay[], wanted: string, locationKey: string) {
+  const canonical = canonicalStreet(wanted, locationKey);
+  return ways.filter((way) => canonicalStreet(String(way.tags?.name ?? ""), locationKey) === canonical);
+}
+
+function sharedNodeIntersection(aWays: OsmWay[], bWays: OsmWay[]): Point | null {
+  for (const aWay of aWays) {
+    if (!Array.isArray(aWay.nodes) || !Array.isArray(aWay.geometry)) continue;
+    const bNodes = new Set<number>();
+    for (const bWay of bWays) for (const node of bWay.nodes ?? []) bNodes.add(node);
+    for (let index = 0; index < aWay.nodes.length; index++) {
+      if (!bNodes.has(aWay.nodes[index])) continue;
+      const point = aWay.geometry[index];
+      if (point && Number.isFinite(point.lat) && Number.isFinite(point.lon)) return { lat: Number(point.lat), lon: Number(point.lon) };
+    }
   }
   return null;
 }
 
-function canonicalWayName(name: string, locationKey: string) {
-  const match = bestStreetMatch(name, locationKey);
-  return normalizeText(match?.street && match.score >= 0.52 ? match.street.name : name);
+function segmentIntersection(a: Point, b: Point, c: Point, d: Point): Point | null {
+  const lat0 = (a.lat + b.lat + c.lat + d.lat) / 4;
+  const k = Math.cos(lat0 * Math.PI / 180);
+  const ax = a.lon * k, ay = a.lat;
+  const bx = b.lon * k, by = b.lat;
+  const cx = c.lon * k, cy = c.lat;
+  const dx = d.lon * k, dy = d.lat;
+  const rX = bx - ax, rY = by - ay;
+  const sX = dx - cx, sY = dy - cy;
+  const denom = rX * sY - rY * sX;
+  if (Math.abs(denom) < 1e-12) return null;
+  const qX = cx - ax, qY = cy - ay;
+  const t = (qX * sY - qY * sX) / denom;
+  const u = (qX * rY - qY * rX) / denom;
+  if (t < -0.01 || t > 1.01 || u < -0.01 || u > 1.01) return null;
+  return { lat: ay + t * rY, lon: (ax + t * rX) / k };
 }
-function geometryPoints(way: any): Point[] { return (way?.geometry ?? []).map((point: any) => ({ lat: Number(point.lat), lon: Number(point.lon) })).filter((point: Point) => Number.isFinite(point.lat) && Number.isFinite(point.lon)); }
-function intersectWays(aWays: any[], bWays: any[]): Point | null {
+
+function geometricIntersection(aWays: OsmWay[], bWays: OsmWay[]): Point | null {
+  for (const aWay of aWays) {
+    const aa = wayPoints(aWay);
+    for (const bWay of bWays) {
+      const bb = wayPoints(bWay);
+      for (let i = 1; i < aa.length; i++) for (let j = 1; j < bb.length; j++) {
+        const point = segmentIntersection(aa[i - 1], aa[i], bb[j - 1], bb[j]);
+        if (point) return point;
+      }
+    }
+  }
+  return null;
+}
+
+function nearIntersection(aWays: OsmWay[], bWays: OsmWay[]): Point | null {
   let best: { point: Point; d: number } | null = null;
-  for (const aWay of aWays) for (const bWay of bWays) for (const a of geometryPoints(aWay)) for (const b of geometryPoints(bWay)) {
-    const d = distance(a, b);
-    if (d <= 18 && (!best || d < best.d)) best = { point: { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 }, d };
+  for (const aw of aWays) for (const bw of bWays) for (const a of wayPoints(aw)) for (const b of wayPoints(bw)) {
+    const distance = meters(a, b);
+    if (distance <= 18 && (!best || distance < best.d)) best = { point: { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 }, d: distance };
   }
   return best?.point ?? null;
 }
-async function crossPoint(mainStreet: string, crossStreet: string, locationKey: string): Promise<Point | null> {
-  const anchors = await photon(crossStreet, locationKey, 4);
-  const mainNorm = normalizeText(mainStreet), crossNorm = normalizeText(crossStreet);
-  for (const anchor of anchors) {
-    const ways = await overpassWays(anchor, 2200);
-    if (!ways.length) continue;
-    const mainWays = ways.filter((way: any) => { const canonical = canonicalWayName(String(way.tags?.name ?? ""), locationKey); return canonical === mainNorm || canonical.includes(mainNorm) || mainNorm.includes(canonical); });
-    if (!mainWays.length) continue;
-    const crossWays = ways.filter((way: any) => { const canonical = canonicalWayName(String(way.tags?.name ?? ""), locationKey); return canonical === crossNorm || canonical.includes(crossNorm) || crossNorm.includes(canonical); });
-    const intersection = intersectWays(mainWays, crossWays);
-    if (intersection) return intersection;
-    const projected = mainWays.map((way: any) => nearestSegment(way, anchor)).filter(Boolean).sort((a: any, b: any) => a.d - b.d)[0];
-    if (projected && projected.d < 1200) return projected.q;
-  }
-  return null;
-}
-async function betweenFallback(mainStreet: string, between: string[], locationKey: string): Promise<{ point: Point; reason: string } | null> {
-  if (between.length !== 2) return null;
-  const first = await crossPoint(mainStreet, between[0], locationKey);
-  const second = await crossPoint(mainStreet, between[1], locationKey);
-  if (first && second) return { point: { lat: (first.lat + second.lat) / 2, lon: (first.lon + second.lon) / 2 }, reason: `Punto medio de ${mainStreet} entre ${between[0]} y ${between[1]}.` };
-  if (first || second) return { point: first ?? second!, reason: `Se ubicó ${mainStreet} en una de las entrecalles; la segunda no pudo resolverse con precisión.` };
-  return null;
+
+function intersection(aWays: OsmWay[], bWays: OsmWay[]) {
+  return sharedNodeIntersection(aWays, bWays) ?? geometricIntersection(aWays, bWays) ?? nearIntersection(aWays, bWays);
 }
 
-function rawStreetVariant(raw: string, height?: number) {
-  const clean = raw.replace(/\s+(?:entre|e\/|e\.)\s+.+$/i, "").trim();
-  if (!height) return clean;
-  const idx = clean.search(/\b\d{1,6}\b/);
-  return idx >= 0 ? clean.slice(0, idx).trim() : clean;
+function projectPointToSegment(p: Point, a: Point, b: Point): Point {
+  const k = Math.cos(p.lat * Math.PI / 180);
+  const ax = a.lon * k, ay = a.lat, bx = b.lon * k, by = b.lat, px = p.lon * k, py = p.lat;
+  const vx = bx - ax, vy = by - ay;
+  const den = vx * vx + vy * vy || 1;
+  const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / den));
+  return { lat: ay + t * vy, lon: (ax + t * vx) / k };
+}
+
+function projectToWays(point: Point, ways: OsmWay[]): Point {
+  let best: { point: Point; d: number } | null = null;
+  for (const way of ways) {
+    const points = wayPoints(way);
+    for (let index = 1; index < points.length; index++) {
+      const projected = projectPointToSegment(point, points[index - 1], points[index]);
+      const d = meters(point, projected);
+      if (!best || d < best.d) best = { point: projected, d };
+    }
+  }
+  return best?.point ?? point;
+}
+
+async function overpassBetween(main: string, between: string[], locationKey: string): Promise<{ point: Point; reason: string } | null> {
+  if (between.length !== 2) return null;
+  const anchor = await streetAnchor(main, locationKey);
+  if (!anchor) return null;
+  const ways = await overpassWays(anchor, 6500);
+  if (!ways.length) return null;
+  const mainWays = matchingWays(ways, main, locationKey);
+  const firstWays = matchingWays(ways, between[0], locationKey);
+  const secondWays = matchingWays(ways, between[1], locationKey);
+  if (!mainWays.length || !firstWays.length || !secondWays.length) return null;
+  const first = intersection(mainWays, firstWays);
+  const second = intersection(mainWays, secondWays);
+  if (!first || !second) return null;
+  const midpoint = { lat: (first.lat + second.lat) / 2, lon: (first.lon + second.lon) / 2 };
+  const onMain = projectToWays(midpoint, mainWays);
+  return {
+    point: onMain,
+    reason: `Punto medio sobre ${main} entre ${between[0]} y ${between[1]}.`,
+  };
+}
+
+async function nominatimBetween(main: string, between: string[], locationKey: string): Promise<{ point: Point; reason: string } | null> {
+  if (between.length !== 2) return null;
+  const loc = locationByKey(locationKey);
+  const place = loc.locality ?? loc.department;
+  const intersectionQueries = [
+    `${main} y ${between[0]}, ${place}, Buenos Aires, Argentina`,
+    `${main} y ${between[1]}, ${place}, Buenos Aires, Argentina`,
+  ];
+  const points: Point[] = [];
+  for (const query of intersectionQueries) {
+    const hits = await nominatimQuery(new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "6", countrycodes: "ar", q: query }));
+    const hit = hits.find((candidate) => samePlace(`${candidate.place} ${candidate.label}`, locationKey));
+    if (!hit) return null;
+    points.push({ lat: hit.lat, lon: hit.lon });
+  }
+  if (points.length !== 2) return null;
+  return {
+    point: { lat: (points[0].lat + points[1].lat) / 2, lon: (points[0].lon + points[1].lon) / 2 },
+    reason: `Punto medio entre los cruces con ${between[0]} y ${between[1]}.`,
+  };
+}
+
+function rawStreet(raw: string) {
+  return raw.replace(/\s+(?:entre|e\/|e\.)\s+.+$/i, "").replace(/\b\d{1,6}\b.*$/, "").trim();
 }
 
 async function resolveOne(raw: string, locationKey: string): Promise<Result> {
   const loc = locationByKey(locationKey);
   const analysis = analyzeCatalogAddress(raw, locationKey);
+  const normalizedAddress = analysis.correctedAddress || raw.trim();
+  const corrections = analysis.corrections;
+
   if (analysis.between.length === 2) {
-    const between = await betweenFallback(analysis.mainStreet, analysis.between, locationKey);
-    if (between) return { ...between.point, precision: "street", source: "overpass", reason: between.reason, normalizedAddress: analysis.correctedAddress, locality: loc.label, corrections: analysis.corrections };
+    const exactBetween = await overpassBetween(analysis.mainStreet, analysis.between, locationKey)
+      ?? await nominatimBetween(analysis.mainStreet, analysis.between, locationKey);
+    if (exactBetween) {
+      return {
+        ...exactBetween.point,
+        precision: "exact",
+        source: "overpass",
+        reason: exactBetween.reason,
+        normalizedAddress,
+        locality: loc.label,
+        corrections,
+      };
+    }
+    return {
+      precision: "missing",
+      source: "none",
+      reason: `No se pudieron confirmar los dos cruces de ${analysis.mainStreet} con ${analysis.between[0]} y ${analysis.between[1]}.`,
+      normalizedAddress,
+      locality: loc.label,
+      corrections,
+    };
   }
 
-  const correctedBase = analysis.correctedAddress.replace(/\s+entre\s+.+$/i, "");
-  const rawStreet = rawStreetVariant(raw, analysis.height);
-  const addressVariants = unique([
-    correctedBase,
+  const base = normalizedAddress.replace(/\s+entre\s+.+$/i, "");
+  const rawBase = raw.replace(/\s+(?:entre|e\/|e\.)\s+.+$/i, "").trim();
+  const street = analysis.mainStreet || analysis.streetInput || rawStreet(raw);
+  const variants = unique([
+    base,
+    rawBase,
     `${analysis.streetInput}${analysis.height ? ` ${analysis.height}` : ""}`,
-    `${rawStreet}${analysis.height ? ` ${analysis.height}` : ""}`,
-    raw.replace(/\s+entre\s+.+$/i, ""),
+    `${street}${analysis.height ? ` ${analysis.height}` : ""}`,
   ]);
 
-  const exact = await georef(addressVariants, locationKey);
-  if (exact) return { ...exact.point, precision: "exact", source: "georef", reason: "Domicilio localizado por Georef Argentina.", normalizedAddress: analysis.correctedAddress, locality: loc.label, corrections: analysis.corrections };
+  const exact = await georef(variants, locationKey);
+  if (exact) return { ...exact, precision: "exact", source: "georef", reason: "", normalizedAddress, locality: loc.label, corrections };
 
-  for (const query of addressVariants.slice(0, 3)) {
-    const hits = await photon(query, locationKey, 8);
-    const best = pickPhotonHit(hits, locationKey, analysis.mainStreet || analysis.streetInput, analysis.height);
-    if (best?.hit && best.score >= (analysis.height ? 7 : 5)) {
-      const exactHeight = !analysis.height || best.hit.housenumber === String(analysis.height) || normalizeText(`${best.hit.name} ${best.hit.street}`).includes(String(analysis.height));
-      return {
-        lat: best.hit.lat,
-        lon: best.hit.lon,
-        precision: exactHeight ? "exact" : "street",
-        source: "photon",
-        reason: exactHeight ? "Domicilio localizado por OpenStreetMap/Photon." : `Se encontró ${analysis.mainStreet}; la altura queda aproximada.`,
-        normalizedAddress: analysis.correctedAddress,
-        locality: loc.label,
-        corrections: analysis.corrections,
-      };
+  for (const query of variants.slice(0, 4)) {
+    const best = bestHit(await photon(query, locationKey, 10), locationKey, street, analysis.height);
+    if (best?.hit && best.score >= (analysis.height ? 9 : 7)) {
+      const exactHeight = !analysis.height || best.hit.houseNumber === String(analysis.height);
+      return { lat: best.hit.lat, lon: best.hit.lon, precision: exactHeight ? "exact" : "street", source: "photon", reason: exactHeight ? "" : "Altura aproximada.", normalizedAddress, locality: loc.label, corrections };
     }
   }
 
-  const nominatimHit = await nominatim(addressVariants[0] ?? raw, analysis.mainStreet || analysis.streetInput, analysis.height, locationKey);
-  if (nominatimHit) {
-    const exactHeight = !analysis.height || nominatimHit.houseNumber === String(analysis.height) || normalizeText(nominatimHit.displayName).includes(String(analysis.height));
-    return {
-      lat: nominatimHit.lat,
-      lon: nominatimHit.lon,
-      precision: exactHeight ? "exact" : "street",
-      source: "nominatim",
-      reason: exactHeight ? "Domicilio localizado por OpenStreetMap/Nominatim." : `Se encontró ${analysis.mainStreet}; la altura queda aproximada.`,
-      normalizedAddress: analysis.correctedAddress,
-      locality: loc.label,
-      corrections: analysis.corrections,
-    };
+  const osm = await nominatim(variants, street, analysis.height, locationKey);
+  if (osm) {
+    const exactHeight = !analysis.height || osm.houseNumber === String(analysis.height);
+    return { lat: osm.lat, lon: osm.lon, precision: exactHeight ? "exact" : "street", source: "nominatim", reason: exactHeight ? "" : "Altura aproximada.", normalizedAddress, locality: loc.label, corrections };
   }
 
-  if (analysis.height) {
-    const parallel = await parallelFallback(analysis.mainStreet, analysis.height, locationKey);
-    if (parallel) return { ...parallel.point, precision: "parallel", source: "overpass", reason: parallel.reason, normalizedAddress: analysis.correctedAddress, locality: loc.label, corrections: analysis.corrections };
+  const streetBest = bestHit(await photon(street, locationKey, 10), locationKey, street);
+  if (streetBest?.hit && streetBest.score >= 7) {
+    return { lat: streetBest.hit.lat, lon: streetBest.hit.lon, precision: "street", source: "photon", reason: analysis.height ? "Altura no encontrada; punto aproximado sobre la calle." : "Calle encontrada.", normalizedAddress, locality: loc.label, corrections };
   }
 
-  const streetQueries = unique([analysis.mainStreet, analysis.streetInput, rawStreet]);
-  for (const streetQuery of streetQueries) {
-    const streetHits = await photon(streetQuery, locationKey, 6);
-    const best = pickPhotonHit(streetHits, locationKey, analysis.mainStreet || streetQuery);
-    if (best?.hit && best.score >= 4) return {
-      lat: best.hit.lat,
-      lon: best.hit.lon,
-      precision: "street",
-      source: "photon",
-      reason: analysis.height ? `No se encontró la altura ${analysis.height}; se marcó un punto aproximado sobre ${analysis.mainStreet}.` : `Se encontró ${analysis.mainStreet || streetQuery}.`,
-      normalizedAddress: analysis.correctedAddress,
-      locality: loc.label,
-      corrections: analysis.corrections,
-    };
-  }
-
-  return { precision: "missing", source: "none", reason: "No se pudo ubicar automáticamente. Podés corregir la dirección o pegar coordenadas.", normalizedAddress: analysis.correctedAddress, locality: loc.label, corrections: analysis.corrections };
+  return { precision: "missing", source: "none", reason: "No se pudo ubicar. Editá la dirección o pegá coordenadas.", normalizedAddress, locality: loc.label, corrections };
 }
 
 export async function POST(request: NextRequest) {
@@ -394,6 +433,8 @@ export async function POST(request: NextRequest) {
   const items = Array.isArray(body?.direcciones) ? body.direcciones : [];
   if (!items.length) return NextResponse.json({ error: "Faltan direcciones." }, { status: 400 });
   const results: Result[] = [];
-  for (const item of items.slice(0, 100)) results.push(await resolveOne(String(item.direccion ?? ""), String(item.locationKey ?? "junin-6000")));
+  for (const item of items.slice(0, 100)) {
+    results.push(await resolveOne(String(item?.direccion ?? ""), String(item?.locationKey ?? "junin-6000")));
+  }
   return NextResponse.json({ results });
 }

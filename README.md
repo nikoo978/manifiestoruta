@@ -38,3 +38,11 @@ SUPABASE_SECRET_KEY=
 ```
 
 La ruta se persiste en `localStorage` y migra versiones anteriores automáticamente.
+
+## v2.2.0
+
+- OCR seleccionable: **Rápido** para una lectura directa e **Intenso** para comprobaciones adicionales.
+- La llamada al modelo OCR ya no usa un timeout artificial del SDK. La infraestructura de Vercel mantiene su propio límite máximo de ejecución.
+- El OCR responde por streaming NDJSON con progreso por etapas y latidos periódicos, mostrando porcentaje y tiempo transcurrido.
+- La PWA detecta versiones nuevas mediante `version.json`, muestra **Actualizar versión…**, activa el nuevo service worker sólo al confirmarlo y luego presenta un resumen de funciones conservadas y novedades.
+- Service worker `ruta-envios-v14`.

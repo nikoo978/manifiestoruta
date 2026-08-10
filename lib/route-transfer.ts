@@ -1,4 +1,4 @@
-import { inferLocation } from "@/lib/supported-locations";
+import { canonicalizeLocation } from "@/lib/supported-locations";
 
 export const ROUTE_TRANSFER_KEY = "manifiesto-ocr:route-transfer:v2";
 export const LEGACY_ROUTE_TRANSFER_KEY = "manifiesto-ocr:route-transfer:v1";
@@ -39,15 +39,18 @@ export function buildRouteTransfer(result: TransferableScanResult): RouteTransfe
     version: 2,
     manifestNumber: result.manifestNumber,
     createdAt: new Date().toISOString(),
-    rows: result.rows.map((row) => ({
-      sourceRowId: `${row.page}:${row.rowNumber}:${row.barcode || `${row.name}|${row.address}`}`,
-      packageNo: row.rowNumber,
-      name: row.name,
-      address: row.address,
-      locality: row.locality,
-      postalCode: row.postalCode,
-      locationKey: inferLocation(row.locality, row.postalCode).key,
-    })),
+    rows: result.rows.map((row) => {
+      const canonical = canonicalizeLocation(row.locality, row.postalCode);
+      return {
+        sourceRowId: `${row.page}:${row.rowNumber}:${row.barcode || `${row.name}|${row.address}`}`,
+        packageNo: row.rowNumber,
+        name: row.name,
+        address: row.address,
+        locality: canonical.locality,
+        postalCode: canonical.postalCode,
+        locationKey: canonical.locationKey,
+      };
+    }),
   };
 }
 
@@ -62,17 +65,20 @@ export function normalizeRouteTransferPayload(value: unknown): RouteTransferPayl
     const row = raw as Record<string, unknown>;
     const locality = String(row.locality ?? "").trim();
     const postalCode = String(row.postalCode ?? "").trim();
-    const inferred = inferLocation(locality, postalCode);
+    const locationKey = String(row.locationKey ?? "").trim();
+    const canonical = canonicalizeLocation(locality, postalCode, locationKey);
+    const address = String(row.address ?? "").trim();
+    if (!address) return [];
     return [{
       sourceRowId: String(row.sourceRowId ?? `legacy:${index + 1}`),
       packageNo: Number(row.packageNo ?? index + 1) || index + 1,
       name: String(row.name ?? row.recipient ?? "").trim(),
-      address: String(row.address ?? "").trim(),
-      locality: locality || inferred.label,
-      postalCode: postalCode || inferred.postalCode,
-      locationKey: String(row.locationKey ?? inferred.key),
+      address,
+      locality: canonical.locality,
+      postalCode: canonical.postalCode,
+      locationKey: canonical.locationKey,
     }];
-  }).filter((row) => row.address);
+  });
 
   return {
     version: 2,

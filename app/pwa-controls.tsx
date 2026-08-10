@@ -10,17 +10,20 @@ interface InstallPromptEvent extends Event {
 export function InstallPwa() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [isIos, setIsIos] = useState(false);
-  const [installed, setInstalled] = useState(true);
+  const [installed, setInstalled] = useState(false);
+  const [ready, setReady] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
-    const standalone = window.matchMedia("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const platformTimer = window.setTimeout(() => {
-      setIsIos(ios);
-      setInstalled(standalone);
-    }, 0);
+    const media = window.matchMedia("(display-mode: standalone)");
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent)
+      || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
+    const refreshInstalled = () => setInstalled(media.matches || navigatorWithStandalone.standalone === true);
+    setIsIos(ios);
+    refreshInstalled();
+    setReady(true);
 
     function beforeInstall(event: Event) {
       event.preventDefault();
@@ -31,12 +34,17 @@ export function InstallPwa() {
       setInstallPrompt(null);
       setShowHelp(false);
     }
+    function displayModeChanged() {
+      refreshInstalled();
+    }
+
     window.addEventListener("beforeinstallprompt", beforeInstall);
     window.addEventListener("appinstalled", appInstalled);
+    media.addEventListener?.("change", displayModeChanged);
     return () => {
-      window.clearTimeout(platformTimer);
       window.removeEventListener("beforeinstallprompt", beforeInstall);
       window.removeEventListener("appinstalled", appInstalled);
+      media.removeEventListener?.("change", displayModeChanged);
     };
   }, []);
 
@@ -51,16 +59,16 @@ export function InstallPwa() {
     setShowHelp(true);
   }
 
-  if (installed || (!isIos && !installPrompt)) return null;
+  if (!ready || installed || (!isIos && !installPrompt)) return null;
 
   return <>
-    <button type="button" className="install-button" onClick={install}><span aria-hidden="true">↓</span> Instalar app</button>
+    <button type="button" className="install-button" onClick={() => void install()}><span aria-hidden="true">↓</span> Instalar app</button>
     {showHelp && <div className="install-backdrop" role="presentation" onClick={() => setShowHelp(false)}>
       <section className="install-sheet" role="dialog" aria-modal="true" aria-labelledby="install-title" onClick={event => event.stopPropagation()}>
         <span className="sheet-handle" aria-hidden="true"/>
         <button type="button" className="sheet-close" aria-label="Cerrar instrucciones" onClick={() => setShowHelp(false)}>×</button>
         <div className="app-icon-mini" aria-hidden="true"><i/><i/><i/></div>
-        <p className="kicker"><span>IOS</span> Instalar en iPhone</p>
+        <p className="kicker"><span>IOS / IPADOS</span> Instalar en iPhone o iPad</p>
         <h2 id="install-title">Usala como una app</h2>
         <ol>
           <li><b>1</b><p>Tocá <strong>Compartir</strong><span>El cuadrado con una flecha hacia arriba en Safari.</span></p></li>

@@ -1,0 +1,26 @@
+{
+  "version": "2.4.0",
+  "serviceWorker": "v19",
+  "title": "Ciudades unificadas y PWA más robusta",
+  "releasedAt": "2026-08-09",
+  "previousFeatures": [
+    "OCR Rápido e Intenso con progreso visible.",
+    "Carga de direcciones manuales, PDF e imágenes.",
+    "Geocodificación, entrecalles, edición y rutas por localidad.",
+    "Botón de ojo para volver a la fuente original con zoom local.",
+    "Callejero oficial de Georef para las localidades soportadas."
+  ],
+  "changes": [
+    "Todas las ciudades se geocodifican y muestran juntas por defecto en un único mapa y una única ruta optimizada.",
+    "Los chips de ciudad quedan como filtros opcionales sin separar el recorrido principal.",
+    "El CSV exporta un único orden de paradas para todo el recorrido, aunque incluya varias ciudades.",
+    "Todas las entradas pasan por una única normalización de ciudad, CP y locationKey antes de guardarse.",
+    "General Viamonte, Gral. Viamonte y sus variantes quedan siempre visibles como Los Toldos · 6015.",
+    "La normalización se aplica a datos viejos, OCR, PDF, tabla pegada, carga manual y transferencia entre módulos.",
+    "Los alias de ciudades se leen desde el catálogo central y ya no desde listas duplicadas o desactualizadas.",
+    "La PWA precarga Ruta, OCR y una pantalla offline, y conserva recursos visitados en un caché versionado.",
+    "El service worker evita cachear respuestas RSC y limpia automáticamente cachés de versiones anteriores.",
+    "Se muestra un aviso de conexión y las actualizaciones se revalidan al volver a la app o recuperar internet.",
+    "La instalación en iPhone/iPad reconoce también iPadOS moderno y el manifiesto agrega accesos directos a Ruta y OCR."
+  ]
+}

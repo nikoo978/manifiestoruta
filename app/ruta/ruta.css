@@ -30,3 +30,61 @@
 .ruta-postal .sheet-field input,.ruta-postal .sheet-field select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);padding:9px 11px;font:inherit}
 .ruta-postal .sheet-save{width:100%;margin-top:8px;min-height:46px}
 @media(max-width:820px){.ruta-postal .edit-address-link{font-size:.72rem}.ruta-postal .sheet-field input,.ruta-postal .sheet-field select{font-size:16px}}
+/* v1.10: interfaz compacta */
+.ruta-postal .brand-lockup{gap:8px}.ruta-postal .brand-lockup>strong{font-size:.95rem;letter-spacing:-.02em}
+.ruta-postal .section-kicker{display:none}.ruta-postal .section-title{margin-bottom:12px;align-items:center}.ruta-postal .section-title h1{font-size:1.2rem}
+.ruta-postal .manual-location{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px}.ruta-postal .manual-location label{white-space:nowrap}.ruta-postal .manual-location select{min-width:0}
+.ruta-postal .drop-zone{min-height:76px;flex-direction:row;gap:9px}.ruta-postal .drop-icon{margin:0;width:30px;height:30px;border-radius:9px}.ruta-postal .drop-zone strong{font-size:.8rem}
+.ruta-postal .map-toolbar,.ruta-postal .route-toolbar{padding:12px 14px}.ruta-postal .message{padding:7px 9px;font-size:.7rem}.ruta-postal .reason{max-width:760px}
+.ruta-postal .empty-state{min-height:110px}.ruta-postal .empty-state>span{margin:0}.ruta-postal .empty-state b{margin-top:4px}
+@media(max-width:820px){.ruta-postal .section-title h1{font-size:1.08rem}.ruta-postal .manual-location{grid-template-columns:1fr}.ruta-postal .manual-location label{display:none}.ruta-postal .drop-zone{min-height:68px}.ruta-postal .map-toolbar,.ruta-postal .route-toolbar{padding:10px 12px}}
+/* v2.1: fuente original con botón de vista */
+.ruta-postal .stop-address{color:var(--ink);font-size:.9rem;font-weight:850;line-height:1.25}
+.ruta-postal .source-eye{width:30px;height:30px;min-width:30px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--brand);display:inline-grid;place-items:center;padding:0;vertical-align:middle}
+.ruta-postal .source-eye svg{width:17px;height:17px;fill:currentColor}.ruta-postal .source-eye:hover{background:var(--brand-2);border-color:#a7c4b1}.ruta-postal .source-eye:active{transform:scale(.96)}
+.ruta-postal .source-backdrop{position:fixed;inset:0;z-index:1700;background:rgba(8,18,12,.68);display:flex;align-items:center;justify-content:center;padding:18px}
+.ruta-postal .source-sheet{position:relative;width:min(100%,980px);max-height:calc(100dvh - 36px);overflow:auto;background:#fff;border-radius:20px;padding:16px;box-shadow:0 24px 80px rgba(0,0,0,.28)}
+.ruta-postal .source-title-row{padding:0 48px 12px 2px}.ruta-postal .source-title-row h2{font-size:1.05rem;margin:0}.ruta-postal .source-title-row p{font-size:.72rem;color:var(--muted);margin:4px 0 0}
+.ruta-postal .source-image-frame,.ruta-postal .source-page-frame{position:relative;width:100%;margin:0 auto;background:#edf0ed;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.ruta-postal .source-image-frame img{display:block;width:100%;height:auto}.ruta-postal .source-pdf-canvas{display:block;width:100%;height:auto}
+.ruta-postal .source-row-highlight{position:absolute;left:0;right:0;background:rgba(255,196,0,.20);border-top:2px solid rgba(210,143,0,.88);border-bottom:2px solid rgba(210,143,0,.88);pointer-events:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+.ruta-postal .source-loading,.ruta-postal .source-error{padding:28px;text-align:center;font-size:.8rem;color:var(--muted)}.ruta-postal .source-error{color:var(--danger)}
+@media(max-width:820px){.ruta-postal .source-backdrop{align-items:flex-end;padding:0}.ruta-postal .source-sheet{width:100%;max-height:92dvh;border-radius:22px 22px 0 0;padding:12px 10px calc(12px + env(safe-area-inset-bottom))}.ruta-postal .stop-address{font-size:.9rem}}
+
+/* v2.1 mobile app behavior */
+html,body,.ruta-postal{touch-action:pan-x pan-y;overscroll-behavior-y:none}
+.ruta-postal .source-sheet{scroll-behavior:auto}
+
+@media(max-width:820px){.ruta-postal .source-eye{width:34px;height:34px;min-width:34px;border-radius:10px}.ruta-postal .source-eye svg{width:18px;height:18px}}
+
+/* v2.2 · OCR controls and progress */
+.ruta-postal .ocr-mode-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding:8px 9px;border:1px solid var(--line);border-radius:12px;background:#f8faf8}
+.ruta-postal .ocr-mode-row>span{font-size:.69rem;font-weight:850;color:var(--muted);white-space:nowrap}
+.ruta-postal .ocr-mode-toggle{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:#e9eeea;border-radius:9px;padding:3px;min-width:168px}
+.ruta-postal .ocr-mode-toggle button{border:0;border-radius:7px;background:transparent;color:#516259;font-size:.72rem;font-weight:850;min-height:31px;padding:5px 10px;cursor:pointer}
+.ruta-postal .ocr-mode-toggle button.active{background:#fff;color:var(--brand);box-shadow:0 2px 8px rgba(16,36,25,.08)}
+.ruta-postal .ocr-mode-toggle button:disabled{cursor:default;opacity:.68}
+.ruta-postal .ocr-progress{margin-top:10px;padding:10px;border:1px solid #b9d1c0;border-radius:12px;background:#f5fbf7;display:grid;gap:7px}
+.ruta-postal .ocr-progress-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;font-size:.72rem;color:#355542;line-height:1.35}
+.ruta-postal .ocr-progress-head span{min-width:0}.ruta-postal .ocr-progress-head strong{font-size:.72rem;color:var(--brand);white-space:nowrap}
+.ruta-postal .ocr-progress-track{height:7px;border-radius:99px;background:#dce9df;overflow:hidden}
+.ruta-postal .ocr-progress-track i{display:block;height:100%;border-radius:inherit;background:var(--brand);transition:width .35s ease;min-width:3px}
+.ruta-postal .ocr-progress small{font-size:.64rem;color:var(--muted)}
+@media(max-width:520px){.ruta-postal .ocr-mode-row{align-items:stretch;flex-direction:column;gap:6px}.ruta-postal .ocr-mode-row>span{display:none}.ruta-postal .ocr-mode-toggle{width:100%;min-width:0}.ruta-postal .ocr-mode-toggle button{min-height:36px;font-size:.76rem}}
+
+/* v2.2.1 · versión visible */
+.ruta-postal .brand-copy{display:flex;flex-direction:column;min-width:0}
+.ruta-postal .brand-copy strong{font-size:.95rem;letter-spacing:-.02em;line-height:1.05}
+.ruta-postal .app-version{display:inline-block;margin-top:2px;color:var(--muted);font-size:.58rem;font-weight:850;letter-spacing:.04em;line-height:1}
+@media(max-width:820px){.ruta-postal .brand-lockup small.app-version{display:block;font-size:.56rem}}
+
+/* v2.3 · visor de fuente con zoom local */
+.ruta-postal .source-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.ruta-postal .source-zoom-controls{display:flex;align-items:center;gap:5px;flex:0 0 auto}
+.ruta-postal .source-zoom-controls button{min-width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);font-weight:900;padding:0 8px}
+.ruta-postal .source-zoom-controls button:disabled{opacity:.35;cursor:default}
+.ruta-postal .source-zoom-controls .zoom-value{min-width:56px;font-size:.68rem;color:var(--brand)}
+.ruta-postal .source-viewport{width:100%;overflow:auto;overscroll-behavior:contain;border-radius:12px;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
+.ruta-postal .source-zoom-content{min-width:100%;transition:width .12s ease}
+.ruta-postal .source-image-frame,.ruta-postal .source-page-frame{overflow:visible}
+@media(max-width:520px){.ruta-postal .source-title-row{padding-right:42px}.ruta-postal .source-zoom-controls{position:absolute;right:12px;top:58px;background:#fff;border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(0,0,0,.08)}.ruta-postal .source-title-row{padding-bottom:54px}}

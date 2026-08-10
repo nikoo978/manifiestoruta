@@ -8,6 +8,9 @@ export type ManifestRow = {
   postalCode: string;
   locationKey: string;
   sourceCode?: string;
+  sourcePage?: number;
+  sourceTop?: number;
+  sourceBottom?: number;
 };
 
 export type ManifestParseResult = {
@@ -36,6 +39,7 @@ type Item = {
 };
 
 type PageData = {
+  pageNumber: number;
   items: Item[];
   width: number;
   height: number;
@@ -54,6 +58,7 @@ const FOLDED_LOCATIONS = SUPPORTED_LOCATIONS.map((location) => ({
   ...location,
   foldedLabel: fold(location.label.replace(/\s*\(.*?\)\s*/g, "")),
   foldedLocality: fold(location.locality ?? location.label.replace(/\s*\(.*?\)\s*/g, "")),
+  foldedAliases: (location.aliases ?? []).map(fold),
 }));
 
 function fold(value: string) {
@@ -98,17 +103,15 @@ function isHeaderOrFooter(value: string) {
 
 function keyFor(city: string, postal: string) {
   const normalized = fold(city);
-  if (normalized.includes("BAIGOR")) return "baigorrita-6013";
-  if (normalized.includes("TOLDOS")) return "los-toldos-6015";
-  if (normalized.includes("ASCEN")) return "ascension-6003";
-  if (normalized.includes("FERRE")) return "ferre-6027";
-  if (normalized.includes("JUNIN")) return "junin-6000";
-  if (normalized.includes("VIAMONTE")) return "general-viamonte-6015";
-  if (postal === "6003") return "ascension-6003";
-  if (postal === "6027") return "ferre-6027";
-  if (postal === "6013") return "baigorrita-6013";
-  if (postal === "6015") return "los-toldos-6015";
-  return "junin-6000";
+  const match = SUPPORTED_LOCATIONS.find((location) => {
+    const aliases = [location.label, location.locality ?? "", ...(location.aliases ?? [])].map(fold);
+    return aliases.some((alias) => alias && (normalized === alias || normalized.includes(alias)));
+  });
+  if (match) return match.key;
+  const postalMatches = SUPPORTED_LOCATIONS.filter((location) => location.postalCode === postal);
+  if (postalMatches.length === 1) return postalMatches[0].key;
+  if (postal === "6070") return "lincoln-6070";
+  return postalMatches[0]?.key ?? "junin-6000";
 }
 
 function locationFromText(value: string) {
@@ -119,7 +122,8 @@ function locationFromText(value: string) {
 
   let matched = FOLDED_LOCATIONS.find((location) =>
     (location.foldedLocality && folded.includes(location.foldedLocality)) ||
-    (location.foldedLabel && folded.includes(location.foldedLabel)),
+    (location.foldedLabel && folded.includes(location.foldedLabel)) ||
+    location.foldedAliases.some((alias) => alias && folded.includes(alias)),
   );
 
   if (!matched && postalCode) {
@@ -136,7 +140,7 @@ function locationFromText(value: string) {
   if (!plausiblePostal && !plausibleLocation) return null;
 
   let locality = matched?.locality ?? matched?.label.replace(/\s*\(.*?\)\s*/g, "") ?? "";
-  let cp = postalCode || matched?.postalCode || "";
+  let cp = matched?.postalCode || postalCode || "";
 
   if (!locality) {
     locality = cleanSpaces(text
@@ -284,6 +288,9 @@ function parseDestinationGeometry(page: PageData) {
       postalCode: marker.location.postalCode,
       locationKey: marker.location.locationKey,
       sourceCode: source.code,
+      sourcePage: page.pageNumber,
+      sourceTop: Math.max(0, Math.min(1, (page.height - topY - 12) / page.height)),
+      sourceBottom: Math.max(0, Math.min(1, (page.height - bottomY + 16) / page.height)),
     });
   }
 
@@ -302,6 +309,9 @@ function parseSequentialFallback(page: PageData) {
     const parsed = parseBlock(block);
     if (!parsed || !marker.location) continue;
     const sourceCode = [...block].reverse().find(looksLikeTrackingCode);
+    const lineCount = Math.max(1, lines.length);
+    const sourceTop = Math.max(0, Math.min(0.98, (previousIndex + 1) / lineCount));
+    const sourceBottom = Math.max(sourceTop + 0.035, Math.min(1, (marker.index + 1) / lineCount));
     rows.push({
       packageNo: rows.length + 1,
       name: parsed.name,
@@ -310,6 +320,9 @@ function parseSequentialFallback(page: PageData) {
       postalCode: marker.location.postalCode,
       locationKey: marker.location.locationKey,
       sourceCode,
+      sourcePage: page.pageNumber,
+      sourceTop,
+      sourceBottom,
     });
   }
   return { rows, markers: markers.length };
@@ -367,7 +380,7 @@ export async function parseManifestPdf(file: File): Promise<ManifestParseResult>
       }
     }
     if (currentLine.length) sequentialLines.push(cleanSpaces(currentLine.join(" ")));
-    pages.push({ items, width: viewport.width, height: viewport.height, sequentialLines });
+    pages.push({ pageNumber, items, width: viewport.width, height: viewport.height, sequentialLines });
   }
 
   const joined = allText.join(" ");
