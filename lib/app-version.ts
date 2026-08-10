@@ -1,5 +1,5 @@
-export const APP_VERSION = "2.4.0";
-export const SERVICE_WORKER_VERSION = "v19";
+export const APP_VERSION = "2.4.1";
+export const SERVICE_WORKER_VERSION = "v20";
 
 export type ReleaseInfo = {
   version: string;
@@ -13,8 +13,8 @@ export type ReleaseInfo = {
 export const CURRENT_RELEASE: ReleaseInfo = {
   version: APP_VERSION,
   serviceWorker: SERVICE_WORKER_VERSION,
-  title: "Ciudades unificadas y PWA más robusta",
-  releasedAt: "2026-08-09",
+  title: "Deployment saneado y geocodificación robusta",
+  releasedAt: "2026-08-10",
   previousFeatures: [
     "OCR Rápido e Intenso con progreso visible.",
     "Carga de direcciones manuales, PDF e imágenes.",
@@ -23,16 +23,12 @@ export const CURRENT_RELEASE: ReleaseInfo = {
     "Callejero oficial de Georef para las localidades soportadas.",
   ],
   changes: [
-    "Todas las ciudades se geocodifican y muestran juntas por defecto en un único mapa y una única ruta optimizada.",
-    "Los chips de ciudad quedan como filtros opcionales sin separar el recorrido principal.",
-    "El CSV exporta un único orden de paradas para todo el recorrido, aunque incluya varias ciudades.",
-    "Todas las entradas pasan por una única normalización de ciudad, CP y locationKey antes de guardarse.",
-    "General Viamonte, Gral. Viamonte y sus variantes quedan siempre visibles como Los Toldos · 6015.",
-    "La normalización se aplica a datos viejos, OCR, PDF, tabla pegada, carga manual y transferencia entre módulos.",
-    "Los alias de ciudades se leen desde el catálogo central y ya no desde listas duplicadas o desactualizadas.",
-    "La PWA precarga Ruta, OCR y una pantalla offline, y conserva recursos visitados en un caché versionado.",
-    "El service worker evita cachear respuestas RSC y limpia automáticamente cachés de versiones anteriores.",
-    "Se muestra un aviso de conexión y las actualizaciones se revalidan al volver a la app o recuperar internet.",
-    "La instalación en iPhone/iPad reconoce también iPadOS moderno y el manifiesto agrega accesos directos a Ruta y OCR.",
+    "Corrige definitivamente la consulta a Nominatim usando el endpoint HTTP real, sin llamadas recursivas.",
+    "La función de Nominatim tiene tipos explícitos y caché/rate limit seguros para el build de Next.js.",
+    "El paquete se entrega con una única raíz de proyecto, sin carpetas de proyecto duplicadas.",
+    "La configuración de Vercel ignora una carpeta legacy manifiestoruta/ si quedara accidentalmente en el repositorio.",
+    "El build de producción ya no depende de descargar el callejero durante npm run build; el catálogo queda versionado y su actualización es manual con npm run refresh:streets.",
+    "Service Worker actualizado a v20 para forzar la renovación limpia de la PWA.",
+    "Conserva la ruta única para todas las ciudades, normalización canónica de localidades y mejoras PWA de v2.4.0.",
   ],
 };

@@ -1,13 +1,13 @@
 {
   "name": "ruta-envios",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "prebuild": "node scripts/update-street-catalog.mjs"
+    "refresh:streets": "node scripts/update-street-catalog.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "4.0.35",

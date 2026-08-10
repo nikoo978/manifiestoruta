@@ -20,7 +20,7 @@ for (const department of TARGET_DEPARTMENTS) {
   let count = 0;
   while (inicio < total) {
     const qs = new URLSearchParams({ provincia: "06", departamento: department, max: "5000", inicio: String(inicio), campos: "completo" });
-    const response = await fetch(`${API}?${qs}`, { headers: { "user-agent": "RutaEnvios/2.3 street catalog" } });
+    const response = await fetch(`${API}?${qs}`, { headers: { "user-agent": "RutaEnvios/2.4.1 street catalog" } });
     if (!response.ok) throw new Error(`Georef ${response.status} al descargar el callejero de ${department}`);
     const data = await response.json();
     total = Number(data.total ?? 0);

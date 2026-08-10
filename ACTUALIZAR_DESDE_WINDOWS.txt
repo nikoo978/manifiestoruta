@@ -1,0 +1,16 @@
+Ruta Envios v2.4.1 - actualización limpia del repositorio
+
+IMPORTANTE
+- El ZIP contiene la RAÍZ del proyecto. No debe quedar dentro de otra carpeta manifiestoruta/ en GitHub.
+- Copiar y reemplazar los archivos directamente en la raíz del clon, donde está el .git.
+- La carpeta .git NO se borra.
+
+Si en el repositorio existe una carpeta anidada llamada manifiestoruta, eliminarla antes del commit:
+  rmdir /S /Q manifiestoruta
+
+Luego copiar el contenido de este ZIP a la raíz del repositorio y ejecutar:
+  git add -A
+  git commit -m "fix: release Ruta Envios v2.4.1"
+  git push origin main
+
+Vercel debe compilar desde la raíz y mostrar v2.4.1 / Service Worker v20.
