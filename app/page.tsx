@@ -87,6 +87,12 @@ import { APP_VERSION } from "@/lib/app-version";
   mode: OcrModeChoice;
  };
 
+ type ActivityState = {
+  title: string;
+  detail: string;
+  percent?: number;
+ };
+
  type OcrStreamEvent = {
   type: "progress" | "heartbeat" | "result" | "error";
   percent?: number;
@@ -131,7 +137,8 @@ import { APP_VERSION } from "@/lib/app-version";
     current = { lat: next.lat!, lon: next.lon! };
   }
 
-  for (let pass = 0; pass < 2; pass++) {
+  const improvementPasses = route.length > 80 ? 1 : 2;
+  for (let pass = 0; pass < improvementPasses; pass++) {
     for (let i = 1; i < route.length - 2; i++) {
       for (let j = i + 1; j < route.length - 1; j++) {
         const a = { lat: route[i - 1].lat!, lon: route[i - 1].lon! };
@@ -328,49 +335,124 @@ import { APP_VERSION } from "@/lib/app-version";
   return result;
  }
 
+ function escapePopup(value: string | number) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[char] ?? char));
+ }
+
+ function yieldToMainThread() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+ }
+
  function MapView({ stops, origin }: { stops: Stop[]; origin?: { lat: number; lon: number } }) {
   const ref = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const leafletRef = useRef<any>(null);
+  const routeLayerRef = useRef<any>(null);
+  const latestDataRef = useRef({ stops, origin });
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const geometrySignature = stops.map((stop) => `${stop.id}:${stop.lat ?? ""}:${stop.lon ?? ""}:${stop.precision ?? ""}:${stop.address}:${stop.name}:${stop.packageNo}`).join("|");
+  const originSignature = origin ? `${origin.lat}:${origin.lon}` : "";
+
+  function drawRoute() {
+    const L = leafletRef.current;
+    const map = mapRef.current;
+    if (!L || !map) return;
+    routeLayerRef.current?.remove();
+    const layer = L.layerGroup().addTo(map);
+    routeLayerRef.current = layer;
+    const points: [number, number][] = [];
+    const data = latestDataRef.current;
+
+    data.stops.forEach((stop, index) => {
+      if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) return;
+      const approximate = stop.precision !== "exact" && stop.precision !== "manual";
+      const icon = L.divIcon({
+        className: "route-marker-wrap",
+        html: `<div class="route-marker ${approximate ? "approx" : ""}"><span>${index + 1}</span></div>`,
+        iconSize: [34, 34], iconAnchor: [17, 17],
+      });
+      L.marker([stop.lat!, stop.lon!], { icon }).addTo(layer).bindPopup(
+        `<strong>${index + 1}. ${escapePopup(stop.address)}</strong><br>${escapePopup(stop.name || "Sin nombre")}<br>Paquete ${escapePopup(stop.packageNo)}`,
+      );
+      points.push([stop.lat!, stop.lon!]);
+    });
+    if (data.origin) {
+      L.circleMarker([data.origin.lat, data.origin.lon], { radius: 8 }).addTo(layer).bindPopup("Inicio");
+      points.push([data.origin.lat, data.origin.lon]);
+    }
+    const mapped = data.stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
+    if (mapped.length > 1) {
+      L.polyline(mapped.map((stop) => [stop.lat!, stop.lon!] as [number, number]), { weight: 4, opacity: 0.6 }).addTo(layer);
+    }
+    if (points.length) map.fitBounds(points, { padding: [28, 28], maxZoom: 15, animate: false });
+    else map.setView([-34.59, -60.95], 12, { animate: false });
+  }
+
   useEffect(() => {
-    let map: any;
+    latestDataRef.current = { stops, origin };
+    if (!mapRef.current) return;
+    const frame = window.requestAnimationFrame(drawRoute);
+    return () => window.cancelAnimationFrame(frame);
+    // La firma contiene exactamente los datos geométricos que dibuja el mapa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geometrySignature, originSignature]);
+
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
-      if (!ref.current) return;
-      if (!document.querySelector("link[data-leaflet-css]")) {
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
-        link.dataset.leafletCss = "true";
-        document.head.appendChild(link);
-      }
-      const importExternal = new Function("url", "return import(url)") as (url: string) => Promise<any>;
-      const L = await importExternal("https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet-src.esm.js");
-      if (cancelled || !ref.current) return;
-      map = L.map(ref.current, { zoomControl: true });
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap contributors", maxZoom: 19 }).addTo(map);
-      const points: [number, number][] = [];
-      stops.forEach((stop, index) => {
-        if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) return;
-        const approximate = stop.precision !== "exact" && stop.precision !== "manual";
-        const icon = L.divIcon({
-          className: "route-marker-wrap",
-          html: `<div class="route-marker ${approximate ? "approx" : ""}"><span>${index + 1}</span></div>`,
-          iconSize: [34, 34], iconAnchor: [17, 17],
+      try {
+        if (!ref.current) return;
+        if (!document.querySelector("link[data-leaflet-css]")) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
+          link.dataset.leafletCss = "true";
+          document.head.appendChild(link);
+        }
+        const importExternal = new Function("url", "return import(url)") as (url: string) => Promise<any>;
+        const L = await importExternal("https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet-src.esm.js");
+        if (cancelled || !ref.current) return;
+        const lowPower = window.matchMedia("(max-width: 820px)").matches || (navigator.hardwareConcurrency || 8) <= 4;
+        leafletRef.current = L;
+        mapRef.current = L.map(ref.current, {
+          zoomControl: true,
+          preferCanvas: true,
+          zoomAnimation: !lowPower,
+          fadeAnimation: false,
+          markerZoomAnimation: !lowPower,
         });
-        L.marker([stop.lat!, stop.lon!], { icon }).addTo(map).bindPopup(`<strong>${index + 1}. ${stop.address}</strong><br>${stop.name || "Sin nombre"}<br>Paquete ${stop.packageNo}`);
-        points.push([stop.lat!, stop.lon!]);
-      });
-      if (origin) {
-        L.circleMarker([origin.lat, origin.lon], { radius: 8 }).addTo(map).bindPopup("Inicio");
-        points.push([origin.lat, origin.lon]);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          maxZoom: 19,
+          updateWhenIdle: true,
+          updateWhenZooming: false,
+          keepBuffer: lowPower ? 1 : 2,
+        }).addTo(mapRef.current);
+        drawRoute();
+        setPhase("ready");
+      } catch {
+        if (!cancelled) setPhase("error");
       }
-      const mapped = stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
-      if (mapped.length > 1) L.polyline(mapped.map((stop) => [stop.lat!, stop.lon!] as [number, number]), { weight: 4, opacity: 0.6 }).addTo(map);
-      if (points.length) map.fitBounds(points, { padding: [34, 34], maxZoom: 15 });
-      else map.setView([-34.59, -60.95], 12);
     })();
-    return () => { cancelled = true; map?.remove(); };
-  }, [stops, origin]);
-  return <div className="map" ref={ref} />;
+    return () => {
+      cancelled = true;
+      routeLayerRef.current?.remove();
+      mapRef.current?.remove();
+      routeLayerRef.current = null;
+      mapRef.current = null;
+      leafletRef.current = null;
+    };
+    // El mapa base se crea una sola vez; las paradas se actualizan en el efecto anterior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return <div className="map-shell">
+    <div className="map" ref={ref} />
+    {phase === "loading" && <div className="map-loading" role="status"><i/><span>Cargando mapa…</span></div>}
+    {phase === "error" && <div className="map-loading error" role="status"><span>No se pudo cargar el mapa. La lista de paradas sigue disponible.</span></div>}
+  </div>;
  }
 
 
@@ -389,7 +471,8 @@ import { APP_VERSION } from "@/lib/app-version";
         const pdf = await pdfjs.getDocument({ data: bytes }).promise;
         const pageNumber = Math.max(1, Math.min(stop.sourcePage ?? 1, pdf.numPages));
         const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: 1.6 });
+        const lowPower = window.matchMedia("(max-width: 820px)").matches || (navigator.hardwareConcurrency || 8) <= 4;
+        const viewport = page.getViewport({ scale: lowPower ? 1.2 : 1.6 });
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
         const context = canvas.getContext("2d");
@@ -473,7 +556,7 @@ import { APP_VERSION } from "@/lib/app-version";
       {loading && <div className="source-loading">Abriendo…</div>}
       {error && <div className="source-error">{error}</div>}
       {source?.kind === "image" && imageUrl && <div className="source-viewport"><div className="source-zoom-content" style={{ width: `${scale * 100}%` }}>
-        <div className="source-image-frame"><img src={imageUrl} alt={`Fuente de ${stop.address}`} />
+        <div className="source-image-frame"><img src={imageUrl} alt={`Fuente de ${stop.address}`} decoding="async" />
         {Number.isFinite(stop.sourceTop) && Number.isFinite(stop.sourceBottom) && <div
           ref={imageHighlightRef}
           className="source-row-highlight"
@@ -495,6 +578,7 @@ import { APP_VERSION } from "@/lib/app-version";
   const [manualLocationKey, setManualLocationKey] = useState("junin-6000");
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<ActivityState | null>(null);
   const [ocrMode, setOcrMode] = useState<OcrModeChoice>("fast");
   const [ocrProgress, setOcrProgress] = useState<OcrProgressState | null>(null);
   const [origin, setOrigin] = useState<{ lat: number; lon: number }>();
@@ -519,7 +603,19 @@ import { APP_VERSION } from "@/lib/app-version";
 
   useEffect(() => {
     if (!hydrated) return;
-    try { localStorage.setItem(STORAGE, JSON.stringify(stops)); } catch { /* memoria solamente */ }
+    const save = () => {
+      try { localStorage.setItem(STORAGE, JSON.stringify(stops)); } catch { /* memoria solamente */ }
+    };
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (idleWindow.requestIdleCallback) {
+      const handle = idleWindow.requestIdleCallback(save, { timeout: 900 });
+      return () => idleWindow.cancelIdleCallback?.(handle);
+    }
+    const handle = window.setTimeout(save, 280);
+    return () => window.clearTimeout(handle);
   }, [hydrated, stops]);
 
   const localityGroups = useMemo(() => {
@@ -541,6 +637,7 @@ import { APP_VERSION } from "@/lib/app-version";
     const pending = list.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
     if (!pending.length) return;
     setBusy(true);
+    setActivity({ title: "Ubicando direcciones", detail: `Preparando ${pending.length} parada${pending.length === 1 ? "" : "s"}…`, percent: 12 });
     const locationCount = new Set(pending.map((stop) => stop.locationKey)).size;
     setMessage(locationCount === 1
       ? `Ubicando ${pending.length} dirección${pending.length === 1 ? "" : "es"} de ${locationByKey(pending[0].locationKey).label}…`
@@ -552,16 +649,19 @@ import { APP_VERSION } from "@/lib/app-version";
         body: JSON.stringify({ direcciones: pending.map((stop) => ({ direccion: stop.rawAddress || stop.address, locationKey: stop.locationKey })) }),
       });
       if (!response.ok) throw new Error("No respondió el servicio de geocodificación.");
+      setActivity({ title: "Ubicando direcciones", detail: "Validando calles y coordenadas…", percent: 82 });
       const data = await response.json() as { results: GeoResult[] };
       const byId = new Map(pending.map((stop, index) => [stop.id, data.results[index]]));
       setStops((previous) => previous.map((stop) => {
         const geo = byId.get(stop.id);
         return geo ? { ...stop, address: geo.normalizedAddress || stop.address, lat: geo.lat, lon: geo.lon, precision: geo.precision, reason: geo.reason, corrections: geo.corrections } : stop;
       }));
+      setActivity({ title: "Ubicando direcciones", detail: "Ordenando la ruta y actualizando el mapa…", percent: 96 });
+      await yieldToMainThread();
       setMessage(locationCount === 1 ? `${locationByKey(pending[0].locationKey).label}: ubicación terminada.` : `${locationCount} ciudades unificadas: ubicación terminada.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudieron ubicar las direcciones.");
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setActivity(null); }
   }
 
   async function activateLocation(key: string, rows?: Stop[]) {
@@ -647,7 +747,8 @@ import { APP_VERSION } from "@/lib/app-version";
     if (!pageRows.length || typeof createImageBitmap !== "function") return fallback;
     try {
       const bitmap = await createImageBitmap(file);
-      const targetWidth = Math.min(640, bitmap.width);
+      const lowPower = window.matchMedia("(max-width: 820px)").matches || (navigator.hardwareConcurrency || 8) <= 4;
+      const targetWidth = Math.min(lowPower ? 384 : 520, bitmap.width);
       const scale = targetWidth / bitmap.width;
       const targetHeight = Math.max(1, Math.round(bitmap.height * scale));
       const canvas = document.createElement("canvas");
@@ -662,14 +763,18 @@ import { APP_VERSION } from "@/lib/app-version";
       const x1 = Math.ceil(targetWidth * 0.95);
       const width = Math.max(1, x1 - x0);
       const darkFraction = new Float32Array(targetHeight);
+      const sampleStep = lowPower ? 4 : 3;
+      const sampledWidth = Math.ceil(width / sampleStep);
+      await yieldToMainThread();
       for (let y = 0; y < Math.min(targetHeight, Math.ceil(targetHeight * 0.45)); y++) {
+        if (y > 0 && y % 96 === 0) await yieldToMainThread();
         let dark = 0;
-        for (let x = x0; x < x1; x += 2) {
+        for (let x = x0; x < x1; x += sampleStep) {
           const offset = (y * targetWidth + x) * 4;
           const lum = pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114;
           if (lum < 100) dark++;
         }
-        darkFraction[y] = dark / Math.ceil(width / 2);
+        darkFraction[y] = dark / sampledWidth;
       }
 
       // El encabezado negro del manifiesto es la última banda oscura ancha antes de las filas.
@@ -694,8 +799,9 @@ import { APP_VERSION } from "@/lib/app-version";
       // para estimar la altura física de una fila; así funciona aun si faltan algunas líneas.
       const coverage = new Float32Array(targetHeight);
       for (let y = Math.min(targetHeight - 1, header.end + 4); y < Math.floor(targetHeight * 0.86); y++) {
+        if (y > header.end + 4 && y % 96 === 0) await yieldToMainThread();
         let covered = 0;
-        for (let x = x0; x < x1; x += 2) {
+        for (let x = x0; x < x1; x += sampleStep) {
           let isDark = false;
           for (let dy = -2; dy <= 2 && !isDark; dy++) {
             const yy = Math.max(0, Math.min(targetHeight - 1, y + dy));
@@ -705,7 +811,7 @@ import { APP_VERSION } from "@/lib/app-version";
           }
           if (isDark) covered++;
         }
-        coverage[y] = covered / Math.ceil(width / 2);
+        coverage[y] = covered / sampledWidth;
       }
       const peaks: number[] = [];
       for (let y = header.end + 8; y < Math.floor(targetHeight * 0.84); y++) {
@@ -737,9 +843,12 @@ import { APP_VERSION } from "@/lib/app-version";
   async function importPdf(file?: File) {
     if (!file) return;
     setBusy(true);
+    setActivity({ title: "Procesando PDF", detail: "Leyendo páginas y reconstruyendo filas…", percent: 18 });
     setMessage("Leyendo PDF…");
     try {
+      await yieldToMainThread();
       const parsed = await parseManifestPdf(file);
+      setActivity({ title: "Procesando PDF", detail: "Validando direcciones y guardando la fuente…", percent: 62 });
       if (!parsed.rows.length) {
         const diagnostic = parsed.diagnostics ? ` Texto: ${parsed.diagnostics.textItems} bloques; localidades detectadas: ${parsed.diagnostics.localityMarkers}; estrategia: ${parsed.diagnostics.strategy}.` : "";
         throw new Error(`${parsed.warnings.join(" ") || "No se pudieron reconstruir envíos desde el PDF."}${diagnostic}`);
@@ -778,7 +887,7 @@ import { APP_VERSION } from "@/lib/app-version";
       if (parsed.warnings.length) setMessage((current) => `${current} ${parsed.warnings.join(" ")}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo leer el PDF.");
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setActivity(null); }
   }
 
   async function importImages(files: File[]) {
@@ -794,19 +903,25 @@ import { APP_VERSION } from "@/lib/app-version";
     }
 
     setBusy(true);
+    setActivity({ title: "Procesando imágenes", detail: "Preparando archivos para OCR…", percent: 2 });
     setOcrProgress({ percent: 2, label: "Preparando imágenes originales…", elapsedMs: 0, mode: ocrMode });
     setMessage(ocrMode === "fast"
       ? `Análisis rápido: leyendo ${images.length} imagen${images.length === 1 ? "" : "es"}…`
       : `Análisis intenso: revisando ${images.length} imagen${images.length === 1 ? "" : "es"} con comprobaciones adicionales…`);
     try {
       setOcrProgress({ percent: 4, label: "Enviando imágenes originales al OCR…", elapsedMs: 0, mode: ocrMode });
+      setActivity({ title: "Procesando imágenes", detail: "Enviando originales al OCR…", percent: 4 });
       const form = new FormData();
       images.forEach((file) => form.append("images", file, file.name));
       form.append("mode", ocrMode === "intense" ? "maximum" : "fast");
       const response = await fetch("/api/scan", { method: "POST", body: form });
-      const result = await readOcrResponse(response, ocrMode, setOcrProgress);
+      const result = await readOcrResponse(response, ocrMode, (progress) => {
+        setOcrProgress(progress);
+        setActivity({ title: "Procesando imágenes", detail: progress.label, percent: progress.percent });
+      });
       if (!result.rows.length) throw new Error("El OCR no encontró filas de envío en las imágenes.");
       setOcrProgress({ percent: 98, label: "Preparando paradas y fuentes originales…", elapsedMs: 0, mode: ocrMode });
+      setActivity({ title: "Finalizando OCR", detail: "Preparando paradas y fuentes originales…", percent: 98 });
 
       const sourceIds = await Promise.all(images.map((file) => saveSourceFile(file, "image")));
       const payload = buildRouteTransfer(result);
@@ -817,6 +932,8 @@ import { APP_VERSION } from "@/lib/app-version";
       const bandsByPage = new Map<number, Map<string, { top: number; bottom: number; visualRow: number }>>();
       for (let page = 1; page <= images.length; page++) {
         const pageRows = result.rows.filter((row) => row.page === page);
+        setActivity({ title: "Finalizando OCR", detail: `Preparando vista de imagen ${page} de ${images.length}…`, percent: Math.min(99, 98 + page / Math.max(1, images.length)) });
+        await yieldToMainThread();
         bandsByPage.set(page, await estimateImageBands(images[page - 1], pageRows));
       }
       const sourceMeta = new Map(result.rows.map((row) => {
@@ -856,6 +973,7 @@ import { APP_VERSION } from "@/lib/app-version";
       setMessage(error instanceof Error ? error.message : "No se pudieron leer las imágenes.");
     } finally {
       setBusy(false);
+      setActivity(null);
       window.setTimeout(() => setOcrProgress(null), 1200);
       if (imagePicker.current) imagePicker.current.value = "";
     }
@@ -947,10 +1065,21 @@ import { APP_VERSION } from "@/lib/app-version";
   }
 
   function locate() {
-    navigator.geolocation?.getCurrentPosition(
-      (position) => setOrigin({ lat: position.coords.latitude, lon: position.coords.longitude }),
-      () => setMessage("No se pudo acceder a tu ubicación."),
-      { enableHighAccuracy: true, timeout: 10_000 },
+    if (!navigator.geolocation) { setMessage("Este dispositivo no ofrece geolocalización."); return; }
+    setBusy(true);
+    setActivity({ title: "Buscando tu ubicación", detail: "Esperando una posición precisa del GPS…" });
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setOrigin({ lat: position.coords.latitude, lon: position.coords.longitude });
+        setBusy(false);
+        setActivity(null);
+      },
+      () => {
+        setMessage("No se pudo acceder a tu ubicación.");
+        setBusy(false);
+        setActivity(null);
+      },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
     );
   }
 
@@ -959,29 +1088,58 @@ import { APP_VERSION } from "@/lib/app-version";
   const activeStops = showingAllLocations ? stops : activeGroup?.rows ?? [];
   const activeMapped = activeStops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
   const activeMissing = activeStops.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
-  const optimized = useMemo(() => optimize(activeStops, origin), [activeStops, origin]);
+  const routeGeometrySignature = activeStops.map((stop) => `${stop.id}:${stop.lat ?? ""}:${stop.lon ?? ""}`).join("|");
+  const optimizedIds = useMemo(() => optimize(activeStops, origin).map((stop) => stop.id),
+    // La firma evita recalcular el algoritmo O(n²) al cambiar sólo estado/nombre/notas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [routeGeometrySignature, origin?.lat, origin?.lon]);
+  const activeById = new Map(activeStops.map((stop) => [stop.id, stop]));
+  const optimized = optimizedIds.flatMap((id) => { const stop = activeById.get(id); return stop ? [stop] : []; });
   const display = [...optimized, ...activeMissing];
 
-  function exportRoute() {
-    const rows = [["Nº de paquete", "Nombre", "Dirección", "Localidad", "CP", "Parada", "Estado", "Precisión", "Lat", "Lon"].map(csv).join(";")];
-    const ordered = optimize(stops, origin);
-    const missing = stops.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
-    [...ordered, ...missing].forEach((stop, index) => rows.push([
-      stop.packageNo, stop.name, stop.address, stop.locality, stop.postalCode,
-      Number.isFinite(stop.lat) ? index + 1 : "", stop.status, stop.precision, stop.lat, stop.lon,
-    ].map(csv).join(";")));
-    const blob = new Blob(["\ufeff" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
-    const anchor = document.createElement("a");
-    anchor.href = URL.createObjectURL(blob);
-    anchor.download = "ruta-postal.csv";
-    anchor.click();
-    URL.revokeObjectURL(anchor.href);
+  async function exportRoute() {
+    setBusy(true);
+    setActivity({ title: "Preparando CSV", detail: "Ordenando paradas para exportar…", percent: 25 });
+    try {
+      await yieldToMainThread();
+      const rows = [["Nº de paquete", "Nombre", "Dirección", "Localidad", "CP", "Parada", "Estado", "Precisión", "Lat", "Lon"].map(csv).join(";")];
+      const ordered = optimize(stops, origin);
+      const missing = stops.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
+      setActivity({ title: "Preparando CSV", detail: "Generando archivo…", percent: 82 });
+      await yieldToMainThread();
+      [...ordered, ...missing].forEach((stop, index) => rows.push([
+        stop.packageNo, stop.name, stop.address, stop.locality, stop.postalCode,
+        Number.isFinite(stop.lat) ? index + 1 : "", stop.status, stop.precision, stop.lat, stop.lon,
+      ].map(csv).join(";")));
+      const blob = new Blob(["\ufeff" + rows.join("\n")], { type: "text/csv;charset=utf-8" });
+      const anchor = document.createElement("a");
+      anchor.href = URL.createObjectURL(blob);
+      anchor.download = "ruta-postal.csv";
+      anchor.click();
+      URL.revokeObjectURL(anchor.href);
+    } finally {
+      setBusy(false);
+      setActivity(null);
+    }
   }
 
   const coordinateStop = coordinateStopId ? stops.find((stop) => stop.id === coordinateStopId) : undefined;
   const sourceStop = sourceStopId ? stops.find((stop) => stop.id === sourceStopId) : undefined;
 
+  const loadingVisible = !hydrated || busy;
+  const loadingState: ActivityState = !hydrated
+    ? { title: "Abriendo Ruta Envíos", detail: "Recuperando la ruta guardada en este dispositivo…" }
+    : activity ?? { title: "Procesando", detail: "La app sigue trabajando. No está tildada." };
+
   return <main className="ruta-postal">
+    {loadingVisible && <div className="app-working" role="status" aria-live="polite" aria-busy="true">
+      <span className="working-spinner" aria-hidden="true" />
+      <span className="working-copy"><strong>{loadingState.title}</strong><small>{loadingState.detail}</small></span>
+      {typeof loadingState.percent === "number" && <b>{Math.round(loadingState.percent)}%</b>}
+      <span className={`working-track ${typeof loadingState.percent === "number" ? "determinate" : "indeterminate"}`} aria-hidden="true">
+        <i style={typeof loadingState.percent === "number" ? { width: `${Math.max(2, Math.min(100, loadingState.percent))}%` } : undefined} />
+      </span>
+    </div>}
     <nav className="app-bar" aria-label="Ruta Envíos">
       <div className="brand-lockup">
         <span className="brand-mark" aria-hidden="true">R</span>
@@ -1083,7 +1241,7 @@ import { APP_VERSION } from "@/lib/app-version";
         <h2>{showingAllLocations ? "Ruta unificada" : activeGroup ? activeGroup.location.label : "Paradas"}</h2>
         <div className="route-actions">
           <span>{display.length} paradas</span>
-          <button className="secondary-action compact-action" onClick={exportRoute}>CSV</button>
+          <button className="secondary-action compact-action" disabled={busy} onClick={() => void exportRoute()}>CSV</button>
         </div>
       </div>
       <div className="stops">

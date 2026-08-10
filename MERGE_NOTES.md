@@ -65,3 +65,10 @@ No se ejecutó `next build` en el entorno de ensamblado porque su registro npm i
 - La validación Georef de OCR usa provincia, partido/departamento y localidad, con fallback entre localidad censal y localidad.
 - `ACTUALIZAR_CALLEJERO.cmd` permite regenerar el snapshot oficial antes del commit.
 - El snapshot incluido en este ensamblado conserva la base heredada hasta ejecutar el actualizador, porque el entorno de ensamblado no tuvo acceso de red directo al archivo de Georef.
+
+
+## v2.5.3
+- Performance Android: mapa persistente, persistencia idle, optimización de ruta memoizada por geometría y postprocesado OCR cooperativo.
+- UX: indicador global de trabajo para diferenciar procesos largos de una interfaz tildada.
+- CSS móvil reduce efectos GPU costosos y evita pintar tarjetas fuera del viewport.
+- Service Worker v24.

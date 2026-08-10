@@ -1,21 +1,22 @@
 {
-  "version": "2.5.2",
-  "serviceWorker": "v23",
-  "title": "Corrección territorial de Teodelina anulada",
+  "version": "2.5.3",
+  "serviceWorker": "v24",
+  "title": "PWA Android más fluida con carga visible",
   "releasedAt": "2026-08-10",
   "previousFeatures": [
+    "Tema claro/oscuro persistente y PWA offline.",
     "OCR Rápido e Intenso con progreso visible.",
-    "Carga de direcciones manuales, PDF e imágenes.",
-    "Ruta única con geocodificación, edición, PWA offline y fuente original.",
-    "Callejero oficial versionado y actualización manual reproducible."
+    "Ruta unificada, callejero enriquecido y geocodificación multi-localidad.",
+    "Fuente original por parada y edición manual de direcciones/coordenadas."
   ],
   "changes": [
-    "Añade tema oscuro persistente con botón de sol en tema claro y luna en tema oscuro.",
-    "Añade Agustina, Tiburcio (Fortín Tiburcio), Arenales, Arribeños y Teodelina; conserva Junín, Ascensión y Ferré y las localidades anteriores.",
-    "Restaura Teodelina a su jurisdicción correcta: Santa Fe / General López, anulando la corrección territorial errónea de la versión 2.5.1.",
-    "El actualizador descarga el listado completo de calles de cada localidad soportada y conserva altura mínima/máxima, rangos por lado, nomenclatura, categoría, jurisdicción, fuente y centro geométrico cuando está disponible.",
-    "OCR marca para revisión las alturas que quedan fuera del rango oficial de una calle.",
-    "La exportación de callejeros incluye provincia, rangos por lado, fuente y coordenadas de referencia.",
-    "Service Worker v23 fuerza la actualización limpia de la PWA."
+    "Mantiene Leaflet montado y actualiza sólo las capas de ruta, evitando recargar mapa y mosaicos ante cambios de estado.",
+    "Difiere la persistencia en localStorage al tiempo ocioso para evitar bloqueos del hilo principal.",
+    "Evita recalcular la optimización O(n²) cuando sólo cambia el estado, nombre o notas de una parada.",
+    "Reduce trabajo de análisis visual de imágenes en Android y cede periódicamente el hilo principal durante el postprocesado OCR.",
+    "Añade un indicador global de trabajo con spinner, etapa y porcentaje para OCR, PDF, geocodificación, GPS y carga inicial.",
+    "Reduce blur, sombras y transiciones costosas en pantallas móviles y omite pintura/layout de tarjetas fuera del viewport.",
+    "Reduce la resolución de render del visor PDF en dispositivos de menor potencia sin modificar el archivo original.",
+    "Service Worker v24 fuerza la actualización de los recursos PWA."
   ]
 }

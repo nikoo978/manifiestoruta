@@ -31,7 +31,7 @@ type OsmWay = {
 };
 
 const HEADERS = {
-  "User-Agent": "RutaEnvios/2.5.2 (delivery route planner)",
+  "User-Agent": "RutaEnvios/2.5.3 (delivery route planner)",
   "Accept-Language": "es-AR,es;q=0.9,en;q=0.4",
 };
 

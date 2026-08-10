@@ -1,106 +1,14 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-10T20:00:21.643Z",
-  "source": "Georef Argentina v2.0 / INDEC",
+  "generatedAt": "2026-08-10T19:29:00Z",
+  "source": "Georef Argentina / INDEC",
   "endpoint": "https://apis.datos.gob.ar/georef/api/v2.0/calles",
-  "completePerLocality": true,
+  "completePerLocality": false,
+  "bundledSnapshotNote": "Catálogo heredado de v2.4.1; ejecutar npm run refresh:streets para descargar el listado completo y enriquecer rangos/metadatos de todas las localidades soportadas.",
   "includes": [
     "officialName",
     "nomenclature",
     "category",
-    "heightRange",
-    "rightHeightRange",
-    "leftHeightRange",
-    "locality",
-    "department",
-    "province",
-    "source",
-    "geometryCenterWhenAvailable"
-  ],
-  "stats": [
-    {
-      "province": "Buenos Aires",
-      "department": "Junín",
-      "locality": "Junín",
-      "streets": 565
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "Junín",
-      "locality": "Agustina",
-      "streets": 61
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "Junín",
-      "locality": "Fortín Tiburcio",
-      "streets": 25
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "General Arenales",
-      "locality": "Ascensión",
-      "streets": 85
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "General Arenales",
-      "locality": "Ferré",
-      "streets": 63
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "General Arenales",
-      "locality": "General Arenales",
-      "streets": 70
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "General Arenales",
-      "locality": "Arribeños",
-      "streets": 69
-    },
-    {
-      "province": "Santa Fe",
-      "department": "General López",
-      "locality": "Teodelina",
-      "streets": 50
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "General Viamonte",
-      "locality": "Los Toldos",
-      "streets": 143
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "General Viamonte",
-      "locality": "Baigorrita",
-      "streets": 37
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "Lincoln",
-      "locality": "Lincoln",
-      "streets": 43
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "Lincoln",
-      "locality": "El Triunfo",
-      "streets": 20
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "Lincoln",
-      "locality": "Coronel Martínez de Hoz",
-      "streets": 43
-    },
-    {
-      "province": "Buenos Aires",
-      "department": "9 de Julio",
-      "locality": "Facundo Quiroga",
-      "streets": 55
-    }
+    "heightRange"
   ]
 }

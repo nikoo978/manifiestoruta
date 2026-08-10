@@ -1,6 +1,6 @@
 # Ruta Envíos
 
-Versión 2.5.2. Ruta Envíos unifica carga, OCR, geocodificación, mapa y preparación del reparto en una sola PWA.
+Versión 2.5.3. Ruta Envíos unifica carga, OCR, geocodificación, mapa y preparación del reparto en una sola PWA.
 
 ## Carga
 
@@ -60,3 +60,14 @@ La ruta se persiste en `localStorage` y migra versiones anteriores automáticame
 ### Callejero oficial
 
 El archivo `data/street-catalog.json` es el snapshot versionado que usa el OCR sin conexión. Para actualizarlo con Georef v2.0 ejecutá `ACTUALIZAR_CALLEJERO.cmd` en Windows o `npm run refresh:streets` en cualquier sistema con Node.js. El actualizador recorre todas las calles de las localidades configuradas, pagina hasta completar cada localidad y conserva nombre oficial, categoría, rangos de altura por lado, provincia, partido/departamento, localidad, fuente y centro geométrico cuando Georef lo informa.
+
+## v2.5.3
+
+- Optimización específica para Android/PWA: Leaflet permanece montado y sólo redibuja capas de ruta cuando cambia la geometría.
+- Persistencia de la ruta diferida con `requestIdleCallback`/timer para evitar escrituras síncronas durante interacciones.
+- La optimización del recorrido no vuelve a ejecutarse cuando sólo cambia el estado, nombre o notas de una parada.
+- Postprocesado de imágenes reducido en teléfonos y dividido en pequeños turnos para mantener vivo el hilo de interfaz.
+- Indicador global de trabajo con spinner, etapa y porcentaje para carga inicial, OCR, PDF, geocodificación y GPS.
+- Menos blur, sombras y transiciones costosas en móvil; tarjetas fuera de pantalla usan `content-visibility`.
+- Visor PDF usa una escala menor en dispositivos de menor potencia, preservando el original.
+- Service Worker `v24`.

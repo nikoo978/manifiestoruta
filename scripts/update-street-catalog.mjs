@@ -32,13 +32,13 @@ function geometryCenter(geometry) {
 
 async function fetchPage(target, locality, inicio) {
   const qs = new URLSearchParams({ provincia: target.provinceId, departamento: target.department, localidad_censal: locality, max: "5000", inicio: String(inicio), campos: "completo" });
-  let response = await fetch(`${API}?${qs}`, { headers: { "user-agent": "RutaEnvios/2.5.2 complete street catalog" } });
+  let response = await fetch(`${API}?${qs}`, { headers: { "user-agent": "RutaEnvios/2.5.3 complete street catalog" } });
   let data = response.ok ? await response.json() : null;
   // Algunas fuentes indexan la localidad como localidad simple y no censal.
   if ((!response.ok || !Array.isArray(data?.calles) || (!data.calles.length && inicio === 0))) {
     qs.delete("localidad_censal");
     qs.set("localidad", locality);
-    response = await fetch(`${API}?${qs}`, { headers: { "user-agent": "RutaEnvios/2.5.2 complete street catalog" } });
+    response = await fetch(`${API}?${qs}`, { headers: { "user-agent": "RutaEnvios/2.5.3 complete street catalog" } });
     if (!response.ok) throw new Error(`Georef ${response.status} al descargar ${locality}, ${target.department}`);
     data = await response.json();
   }
