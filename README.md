@@ -1,6 +1,6 @@
 # Ruta Envíos
 
-Versión 1.7.0. Ruta Envíos es la interfaz principal para preparar repartos por localidad.
+Versión 2.5.2. Ruta Envíos unifica carga, OCR, geocodificación, mapa y preparación del reparto en una sola PWA.
 
 ## Carga
 
@@ -14,7 +14,7 @@ Versión 1.7.0. Ruta Envíos es la interfaz principal para preparar repartos por
 
 La aplicación intenta ubicar cada parada con Georef Argentina, Photon/OpenStreetMap y los fallbacks de calles/intersecciones. Si una dirección queda pendiente, permite abrirla en Google Maps y pegar coordenadas manuales (`lat, lon` o una URL que las contenga).
 
-Los envíos se agrupan por localidad y sólo se muestra un mapa por vez.
+Todas las localidades pueden optimizarse en una sola ruta y un solo mapa; los chips de localidad funcionan como filtros visuales.
 
 ## PWA
 
@@ -46,3 +46,17 @@ La ruta se persiste en `localStorage` y migra versiones anteriores automáticame
 - El OCR responde por streaming NDJSON con progreso por etapas y latidos periódicos, mostrando porcentaje y tiempo transcurrido.
 - La PWA detecta versiones nuevas mediante `version.json`, muestra **Actualizar versión…**, activa el nuevo service worker sólo al confirmarlo y luego presenta un resumen de funciones conservadas y novedades.
 - Service worker `ruta-envios-v14`.
+
+
+## v2.5.2
+
+- Corrección: Teodelina vuelve a Santa Fe / General López; se anula la asignación errónea a Buenos Aires de la versión 2.5.1.
+- Tema claro/oscuro persistente (sol/luna) con detección inicial del sistema.
+- Localidades prioritarias: Junín, Agustina, Tiburcio, Ascensión, Ferré, Arenales, Arribeños y Teodelina.
+- Teodelina se usa en Santa Fe / General López para OCR, callejero y geocodificación.
+- `npm run refresh:streets` descarga el callejero completo por localidad desde Georef v2.0 y guarda rangos de altura, lados, categoría, fuente y centro geométrico cuando la API lo informa.
+- El catálogo queda versionado en `data/street-catalog.json`; el build de Vercel no depende de Internet.
+
+### Callejero oficial
+
+El archivo `data/street-catalog.json` es el snapshot versionado que usa el OCR sin conexión. Para actualizarlo con Georef v2.0 ejecutá `ACTUALIZAR_CALLEJERO.cmd` en Windows o `npm run refresh:streets` en cualquier sistema con Node.js. El actualizador recorre todas las calles de las localidades configuradas, pagina hasta completar cada localidad y conserva nombre oficial, categoría, rangos de altura por lado, provincia, partido/departamento, localidad, fuente y centro geométrico cuando Georef lo informa.

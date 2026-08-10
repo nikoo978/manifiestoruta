@@ -88,3 +88,30 @@ html,body,.ruta-postal{touch-action:pan-x pan-y;overscroll-behavior-y:none}
 .ruta-postal .source-zoom-content{min-width:100%;transition:width .12s ease}
 .ruta-postal .source-image-frame,.ruta-postal .source-page-frame{overflow:visible}
 @media(max-width:520px){.ruta-postal .source-title-row{padding-right:42px}.ruta-postal .source-zoom-controls{position:absolute;right:12px;top:58px;background:#fff;border-radius:11px;padding:3px;box-shadow:0 4px 14px rgba(0,0,0,.08)}.ruta-postal .source-title-row{padding-bottom:54px}}
+
+
+/* Tema oscuro de Ruta: superficies, formularios, overlays y mapa. */
+html[data-theme="dark"] .ruta-postal{--bg:#0e1511;--surface:#151e18;--surface-2:#1a251e;--ink:#eef5f0;--muted:#9baaa1;--line:#2b3a31;--brand:#4db47a;--brand-2:#193426;--danger:#ff8585;--amber:#e6b45f;background:var(--bg);color:var(--ink)}
+html[data-theme="dark"] .ruta-postal .app-bar{background:#121b16ed;box-shadow:0 12px 34px #0007}
+html[data-theme="dark"] .ruta-postal .icon-action,html[data-theme="dark"] .ruta-postal .clear-action,html[data-theme="dark"] .ruta-postal .install-button,html[data-theme="dark"] .ruta-postal select,html[data-theme="dark"] .ruta-postal textarea,html[data-theme="dark"] .ruta-postal .coordinate-sheet input,html[data-theme="dark"] .ruta-postal .secondary-action{background:#19231d;color:var(--ink);border-color:var(--line)}
+html[data-theme="dark"] .ruta-postal .clear-action{color:#ff9999;background:#261818;border-color:#513030}
+html[data-theme="dark"] .ruta-postal .drop-zone{background:#111a15;border-color:#385242}
+html[data-theme="dark"] .ruta-postal .drop-zone:hover,html[data-theme="dark"] .ruta-postal .drop-zone.dragging{background:#193426}
+html[data-theme="dark"] .ruta-postal .panel{box-shadow:0 8px 28px #0005}
+html[data-theme="dark"] .ruta-postal .stops,html[data-theme="dark"] .ruta-postal .stop-card,html[data-theme="dark"] .ruta-postal .empty-state,html[data-theme="dark"] .ruta-postal .coordinate-sheet,html[data-theme="dark"] .ruta-postal .source-sheet{background:var(--surface);color:var(--ink);border-color:var(--line)}
+html[data-theme="dark"] .ruta-postal .mobile-dock{background:#121b16ef;border-color:var(--line);box-shadow:0 -10px 30px #0008}
+html[data-theme="dark"] .ruta-postal .leaflet-tile-pane{filter:brightness(.72) saturate(.78) contrast(1.08)}
+html[data-theme="dark"] .ruta-postal .leaflet-control-zoom a,html[data-theme="dark"] .ruta-postal .leaflet-control-attribution{background:#17211b!important;color:#c8d6ce!important;border-color:#304038!important}
+html[data-theme="dark"] .ruta-postal .leaflet-popup-content-wrapper,html[data-theme="dark"] .ruta-postal .leaflet-popup-tip{background:#17211b;color:#eef5f0}
+html[data-theme="dark"] .ruta-postal .locality-chip,
+html[data-theme="dark"] .ruta-postal .stop-controls button,
+html[data-theme="dark"] .ruta-postal .location-fallback button,
+html[data-theme="dark"] .ruta-postal .location-fallback a,
+html[data-theme="dark"] .ruta-postal .coordinate-actions button,
+html[data-theme="dark"] .ruta-postal .install-sheet,
+html[data-theme="dark"] .ruta-postal .source-zoom-controls{background:#19231d;color:var(--ink);border-color:var(--line)}
+html[data-theme="dark"] .ruta-postal .locality-chip.active{background:var(--brand-2);border-color:var(--brand)}
+html[data-theme="dark"] .ruta-postal .stop-card:hover{background:#19231d}
+html[data-theme="dark"] .ruta-postal .stop-card.approx{background:#241e13}
+html[data-theme="dark"] .ruta-postal .sheet-handle{background:#415047}
+html[data-theme="dark"] .ruta-postal .sheet-close{background:#202c24;color:var(--ink)}

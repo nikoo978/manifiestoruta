@@ -51,3 +51,17 @@ Para mantener el `package-lock.json` del proyecto OCR sin introducir paquetes no
 - Imports locales revisados.
 
 No se ejecutó `next build` en el entorno de ensamblado porque su registro npm interno no contiene una dependencia transitiva ya presente en el proyecto OCR original (`zod-validation-error`). Esto es una limitación del registro del entorno, no un error detectado en el código fuente.
+
+
+## v2.5.2
+- Se anula la corrección territorial errónea de v2.5.1: Teodelina vuelve a Santa Fe / General López.
+- Tema oscuro persistente con sol/luna.
+- Corredor ampliado: Junín, Agustina, Fortín Tiburcio, Ascensión, Ferré, General Arenales y Arribeños, más Teodelina (Santa Fe / General López).
+- Geocodificación multi-provincia.
+- Callejero Georef enriquecido con rangos de altura y metadatos útiles para OCR/mapa.
+
+### Validaciones adicionales v2.5.2
+- El parser PDF respeta la provincia configurada por localidad y los CP alternativos definidos.
+- La validación Georef de OCR usa provincia, partido/departamento y localidad, con fallback entre localidad censal y localidad.
+- `ACTUALIZAR_CALLEJERO.cmd` permite regenerar el snapshot oficial antes del commit.
+- El snapshot incluido en este ensamblado conserva la base heredada hasta ejecutar el actualizador, porque el entorno de ensamblado no tuvo acceso de red directo al archivo de Georef.

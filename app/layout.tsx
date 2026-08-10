@@ -26,9 +26,14 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  themeColor: "#17663d",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#17663d" },
+    { media: "(prefers-color-scheme: dark)", color: "#101713" },
+  ],
 };
 
+const themeBootstrap = `(()=>{try{const k="ruta-envios-theme";const s=localStorage.getItem(k);const t=s==="light"||s==="dark"?s:(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;}catch{}})();`;
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="es"><body><PwaRegister />{children}</body></html>;
+  return <html lang="es" suppressHydrationWarning><head><script dangerouslySetInnerHTML={{ __html: themeBootstrap }} /></head><body><PwaRegister />{children}</body></html>;
 }

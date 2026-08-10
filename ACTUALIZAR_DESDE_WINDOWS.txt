@@ -1,4 +1,4 @@
-Ruta Envios v2.4.1 - actualización limpia del repositorio
+Ruta Envios v2.5.1 - actualización limpia del repositorio
 
 IMPORTANTE
 - El ZIP contiene la RAÍZ del proyecto. No debe quedar dentro de otra carpeta manifiestoruta/ en GitHub.
@@ -8,9 +8,12 @@ IMPORTANTE
 Si en el repositorio existe una carpeta anidada llamada manifiestoruta, eliminarla antes del commit:
   rmdir /S /Q manifiestoruta
 
-Luego copiar el contenido de este ZIP a la raíz del repositorio y ejecutar:
+Después de copiar el contenido del ZIP, actualizá el callejero oficial (requiere Internet y Node.js):
+  ACTUALIZAR_CALLEJERO.cmd
+
+Luego ejecutá:
   git add -A
-  git commit -m "fix: release Ruta Envios v2.4.1"
+  git commit -m "feat: release Ruta Envios v2.5.1"
   git push origin main
 
-Vercel debe compilar desde la raíz y mostrar v2.4.1 / Service Worker v20.
+Vercel debe compilar desde la raíz y mostrar v2.5.1 / Service Worker v22.

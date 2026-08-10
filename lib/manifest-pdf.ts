@@ -108,7 +108,7 @@ function keyFor(city: string, postal: string) {
     return aliases.some((alias) => alias && (normalized === alias || normalized.includes(alias)));
   });
   if (match) return match.key;
-  const postalMatches = SUPPORTED_LOCATIONS.filter((location) => location.postalCode === postal);
+  const postalMatches = SUPPORTED_LOCATIONS.filter((location) => location.postalCode === postal || location.postalAliases?.includes(postal));
   if (postalMatches.length === 1) return postalMatches[0].key;
   if (postal === "6070") return "lincoln-6070";
   return postalMatches[0]?.key ?? "junin-6000";
@@ -127,14 +127,14 @@ function locationFromText(value: string) {
   );
 
   if (!matched && postalCode) {
-    const postalMatches = FOLDED_LOCATIONS.filter((location) => location.postalCode === postalCode);
+    const postalMatches = FOLDED_LOCATIONS.filter((location) => location.postalCode === postalCode || location.postalAliases?.includes(postalCode));
     if (postalMatches.length === 1) matched = postalMatches[0];
     else if (postalMatches.length > 1) {
       matched = postalMatches.find((location) => folded.includes(location.foldedLocality)) ?? postalMatches[0];
     }
   }
 
-  const hasProvince = /BUENOS\s+AIRES|PROV(?:INCIA)?\.?\s+DE\s+BUENOS\s+AIRES/i.test(text);
+  const hasProvince = /BUENOS\s+AIRES|SANTA\s+FE|PROV(?:INCIA)?\.?\s+(?:DE\s+)?(?:BUENOS\s+AIRES|SANTA\s+FE)/i.test(text);
   const plausiblePostal = Boolean(postalCode && (matched || hasProvince));
   const plausibleLocation = Boolean(matched && (postalCode || text.length <= 65));
   if (!plausiblePostal && !plausibleLocation) return null;
@@ -145,8 +145,8 @@ function locationFromText(value: string) {
   if (!locality) {
     locality = cleanSpaces(text
       .replace(/\b\d{4}\b/g, " ")
-      .replace(/PROV(?:INCIA)?\.?\s+DE\s+BUENOS\s+AIRES/ig, " ")
-      .replace(/BUENOS\s+AIRES/ig, " ")
+      .replace(/PROV(?:INCIA)?\.?\s+(?:DE\s+)?(?:BUENOS\s+AIRES|SANTA\s+FE)/ig, " ")
+      .replace(/BUENOS\s+AIRES|SANTA\s+FE/ig, " ")
       .replace(/\b(?:LOCALIDAD|C\.?P\.?|CODIGO\s+POSTAL)\b\s*:?/ig, " ")
       .replace(/[(),;]+/g, " "));
   }

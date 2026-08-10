@@ -8,7 +8,7 @@ type Result = {
   lat?: number;
   lon?: number;
   precision: Precision;
-  source: "georef" | "photon" | "nominatim" | "overpass" | "none";
+  source: "georef" | "photon" | "nominatim" | "overpass" | "catalog" | "none";
   reason: string;
   normalizedAddress: string;
   locality: string;
@@ -31,7 +31,7 @@ type OsmWay = {
 };
 
 const HEADERS = {
-  "User-Agent": "RutaEnvios/2.4.1 (delivery route planner)",
+  "User-Agent": "RutaEnvios/2.5.2 (delivery route planner)",
   "Accept-Language": "es-AR,es;q=0.9,en;q=0.4",
 };
 
@@ -74,7 +74,7 @@ function sameStreet(found: string, wanted: string) {
 
 async function georefOne(address: string, locationKey: string, scope: "locality" | "department" | "loose"): Promise<Point | null> {
   const loc = locationByKey(locationKey);
-  const qs = new URLSearchParams({ direccion: address, provincia: "Buenos Aires", max: "5", campos: "completo" });
+  const qs = new URLSearchParams({ direccion: address, provincia: loc.province, max: "5", campos: "completo" });
   if (scope !== "loose") qs.set("departamento", loc.department);
   if (scope === "locality" && loc.locality) {
     if (loc.localityId) qs.set("localidad_censal", loc.locality);
@@ -111,7 +111,7 @@ async function georef(addresses: string[], locationKey: string): Promise<Point |
 async function photon(query: string, locationKey: string, limit = 8): Promise<SearchHit[]> {
   const loc = locationByKey(locationKey);
   const place = loc.locality ?? loc.department;
-  const qs = new URLSearchParams({ q: `${query}, ${place}, Buenos Aires, Argentina`, limit: String(limit), lang: "es" });
+  const qs = new URLSearchParams({ q: `${query}, ${place}, ${loc.province}, Argentina`, limit: String(limit), lang: "es" });
   const data = await fetchJson(`https://photon.komoot.io/api/?${qs}`, undefined, 11000);
   return (Array.isArray(data?.features) ? data.features : []).map((feature: any) => {
     const p = feature?.properties ?? {};
@@ -175,11 +175,11 @@ async function nominatimQuery(qs: URLSearchParams): Promise<SearchHit[]> {
 async function nominatim(addresses: string[], street: string, height: number | undefined, locationKey: string): Promise<SearchHit | null> {
   const loc = locationByKey(locationKey);
   const place = loc.locality ?? loc.department;
-  const structured = new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "8", countrycodes: "ar", street: `${height ? `${height} ` : ""}${street}`.trim(), city: place, state: "Buenos Aires" });
+  const structured = new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "8", countrycodes: "ar", street: `${height ? `${height} ` : ""}${street}`.trim(), city: place, state: loc.province });
   if (loc.postalCode) structured.set("postalcode", loc.postalCode);
   const candidates = [
     structured,
-    ...addresses.slice(0, 3).map((address) => new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "8", countrycodes: "ar", q: `${address}, ${place}, Buenos Aires, Argentina` })),
+    ...addresses.slice(0, 3).map((address) => new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "8", countrycodes: "ar", q: `${address}, ${place}, ${loc.province}, Argentina` })),
   ];
   for (const qs of candidates) {
     const best = bestHit(await nominatimQuery(qs), locationKey, street, height);
@@ -342,8 +342,8 @@ async function nominatimBetween(main: string, between: string[], locationKey: st
   const loc = locationByKey(locationKey);
   const place = loc.locality ?? loc.department;
   const intersectionQueries = [
-    `${main} y ${between[0]}, ${place}, Buenos Aires, Argentina`,
-    `${main} y ${between[1]}, ${place}, Buenos Aires, Argentina`,
+    `${main} y ${between[0]}, ${place}, ${loc.province}, Argentina`,
+    `${main} y ${between[1]}, ${place}, ${loc.province}, Argentina`,
   ];
   const points: Point[] = [];
   for (const query of intersectionQueries) {
@@ -368,6 +368,9 @@ async function resolveOne(raw: string, locationKey: string): Promise<Result> {
   const analysis = analyzeCatalogAddress(raw, locationKey);
   const normalizedAddress = analysis.correctedAddress || raw.trim();
   const corrections = analysis.corrections;
+  const rangeWarning = analysis.heightPlausible === false && analysis.heightRange
+    ? `La altura ${analysis.height} está fuera del rango oficial ${analysis.heightRange.from}-${analysis.heightRange.to} para ${analysis.mainStreet}. `
+    : "";
 
   if (analysis.between.length === 2) {
     const exactBetween = await overpassBetween(analysis.mainStreet, analysis.between, locationKey)
@@ -377,7 +380,7 @@ async function resolveOne(raw: string, locationKey: string): Promise<Result> {
         ...exactBetween.point,
         precision: "exact",
         source: "overpass",
-        reason: exactBetween.reason,
+        reason: `${rangeWarning}${exactBetween.reason}`.trim(),
         normalizedAddress,
         locality: loc.label,
         corrections,
@@ -386,7 +389,7 @@ async function resolveOne(raw: string, locationKey: string): Promise<Result> {
     return {
       precision: "missing",
       source: "none",
-      reason: `No se pudieron confirmar los dos cruces de ${analysis.mainStreet} con ${analysis.between[0]} y ${analysis.between[1]}.`,
+      reason: `${rangeWarning}No se pudieron confirmar los dos cruces de ${analysis.mainStreet} con ${analysis.between[0]} y ${analysis.between[1]}.`,
       normalizedAddress,
       locality: loc.label,
       corrections,
@@ -404,25 +407,38 @@ async function resolveOne(raw: string, locationKey: string): Promise<Result> {
   ]);
 
   const exact = await georef(variants, locationKey);
-  if (exact) return { ...exact, precision: "exact", source: "georef", reason: "", normalizedAddress, locality: loc.label, corrections };
+  if (exact) return { ...exact, precision: "exact", source: "georef", reason: rangeWarning.trim(), normalizedAddress, locality: loc.label, corrections };
 
   for (const query of variants.slice(0, 4)) {
     const best = bestHit(await photon(query, locationKey, 10), locationKey, street, analysis.height);
     if (best?.hit && best.score >= (analysis.height ? 9 : 7)) {
       const exactHeight = !analysis.height || best.hit.houseNumber === String(analysis.height);
-      return { lat: best.hit.lat, lon: best.hit.lon, precision: exactHeight ? "exact" : "street", source: "photon", reason: exactHeight ? "" : "Altura aproximada.", normalizedAddress, locality: loc.label, corrections };
+      return { lat: best.hit.lat, lon: best.hit.lon, precision: exactHeight ? "exact" : "street", source: "photon", reason: `${rangeWarning}${exactHeight ? "" : "Altura aproximada."}`.trim(), normalizedAddress, locality: loc.label, corrections };
     }
   }
 
   const osm = await nominatim(variants, street, analysis.height, locationKey);
   if (osm) {
     const exactHeight = !analysis.height || osm.houseNumber === String(analysis.height);
-    return { lat: osm.lat, lon: osm.lon, precision: exactHeight ? "exact" : "street", source: "nominatim", reason: exactHeight ? "" : "Altura aproximada.", normalizedAddress, locality: loc.label, corrections };
+    return { lat: osm.lat, lon: osm.lon, precision: exactHeight ? "exact" : "street", source: "nominatim", reason: `${rangeWarning}${exactHeight ? "" : "Altura aproximada."}`.trim(), normalizedAddress, locality: loc.label, corrections };
   }
 
   const streetBest = bestHit(await photon(street, locationKey, 10), locationKey, street);
   if (streetBest?.hit && streetBest.score >= 7) {
-    return { lat: streetBest.hit.lat, lon: streetBest.hit.lon, precision: "street", source: "photon", reason: analysis.height ? "Altura no encontrada; punto aproximado sobre la calle." : "Calle encontrada.", normalizedAddress, locality: loc.label, corrections };
+    return { lat: streetBest.hit.lat, lon: streetBest.hit.lon, precision: "street", source: "photon", reason: `${rangeWarning}${analysis.height ? "Altura no encontrada; punto aproximado sobre la calle." : "Calle encontrada."}`.trim(), normalizedAddress, locality: loc.label, corrections };
+  }
+
+  if (analysis.streetCenter) {
+    return {
+      lat: analysis.streetCenter.lat,
+      lon: analysis.streetCenter.lon,
+      precision: "street",
+      source: "catalog",
+      reason: `${rangeWarning}Ubicación aproximada usando el centro geométrico oficial de la calle del catálogo Georef.`.trim(),
+      normalizedAddress,
+      locality: loc.label,
+      corrections,
+    };
   }
 
   return { precision: "missing", source: "none", reason: "No se pudo ubicar. Editá la dirección o pegá coordenadas.", normalizedAddress, locality: loc.label, corrections };

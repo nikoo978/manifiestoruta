@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { InstallPwa } from "./pwa-controls";
+import { InstallPwa, ThemeToggle } from "./pwa-controls";
 import { analyzeCatalogAddress } from "@/lib/street-catalog";
 import { canonicalizeLocation, locationByKey, SUPPORTED_LOCATIONS } from "@/lib/supported-locations";
 import { parseManifestPdf } from "@/lib/manifest-pdf";
@@ -277,7 +277,8 @@ import { APP_VERSION } from "@/lib/app-version";
  }
 
  function googleMapsSearch(stop: Stop) {
-  const query = [stop.rawAddress || stop.address, stop.locality, stop.postalCode, "Buenos Aires", "Argentina"].filter(Boolean).join(", ");
+  const loc = locationByKey(stop.locationKey);
+  const query = [stop.rawAddress || stop.address, stop.locality, stop.postalCode, loc.province, "Argentina"].filter(Boolean).join(", ");
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
  }
 
@@ -991,6 +992,7 @@ import { APP_VERSION } from "@/lib/app-version";
       </div>
       <div className="top-actions">
         <InstallPwa />
+        <ThemeToggle />
         <button className="icon-action" type="button" onClick={locate} title="Usar mi ubicación" aria-label="Usar mi ubicación">⌖</button>
         <button className="clear-action" type="button" disabled={!stops.length} onClick={clearAll}>Limpiar</button>
       </div>

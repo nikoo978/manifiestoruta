@@ -36,7 +36,7 @@ function explicitLocation(value: string) {
   const postalMatches = [...value.matchAll(/\b(\d{4})\b/g)];
   const lastPostal = postalMatches.at(-1)?.[1];
   if (!best && lastPostal) {
-    const candidates = SUPPORTED_LOCATIONS.filter((location) => location.postalCode === lastPostal);
+    const candidates = SUPPORTED_LOCATIONS.filter((location) => location.postalCode === lastPostal || location.postalAliases?.includes(lastPostal));
     if (candidates.length === 1) best = { index: value.lastIndexOf(lastPostal), locationKey: candidates[0].key, alias: "" };
   }
   return best ? locationByKey(best.locationKey) : null;
@@ -75,7 +75,9 @@ export function parseManualAddresses(text: string, defaultLocationKey: string): 
       const re = new RegExp(`(?:^|[\\s,;()])${escapeRegExp(item.alias)}(?=$|[\\s,;()])`, "ig");
       value = value.replace(re, " ");
     }
-    value = value.replace(new RegExp(`\\b${escapeRegExp(detected.postalCode)}\\b`, "g"), " ");
+    for (const postal of [detected.postalCode, ...(detected.postalAliases ?? [])]) {
+      value = value.replace(new RegExp(`\\b${escapeRegExp(postal)}\\b`, "g"), " ");
+    }
     value = value.replace(/\s*[,;]+\s*/g, " ").replace(/\s+/g, " ").trim();
     if (!value) return [];
 

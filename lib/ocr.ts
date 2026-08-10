@@ -305,6 +305,7 @@ async function verifyRow(row: RawRow, disputed: boolean, secondReadFailed: boole
   if (uncertainImportant.length) reasons.push(`Campo dudoso: ${uncertainImportant.join(", ")}`);
   if (!place) reasons.push("Localidad fuera del catálogo");
   if (!geo) reasons.push("Calle sin validación oficial");
+  if (catalog.heightPlausible === false && catalog.heightRange) reasons.push(`Altura fuera del rango oficial ${catalog.heightRange.from}-${catalog.heightRange.to}`);
   if (row.confidence < 94) reasons.push("Confianza visual menor a 94%");
 
   return {

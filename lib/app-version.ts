@@ -1,5 +1,5 @@
-export const APP_VERSION = "2.4.1";
-export const SERVICE_WORKER_VERSION = "v20";
+export const APP_VERSION = "2.5.2";
+export const SERVICE_WORKER_VERSION = "v23";
 
 export type ReleaseInfo = {
   version: string;
@@ -13,22 +13,21 @@ export type ReleaseInfo = {
 export const CURRENT_RELEASE: ReleaseInfo = {
   version: APP_VERSION,
   serviceWorker: SERVICE_WORKER_VERSION,
-  title: "Deployment saneado y geocodificación robusta",
+  title: "Tema oscuro y corredor ampliado con callejero enriquecido",
   releasedAt: "2026-08-10",
   previousFeatures: [
     "OCR Rápido e Intenso con progreso visible.",
     "Carga de direcciones manuales, PDF e imágenes.",
-    "Geocodificación, entrecalles, edición y rutas por localidad.",
-    "Botón de ojo para volver a la fuente original con zoom local.",
-    "Callejero oficial de Georef para las localidades soportadas.",
+    "Ruta única con geocodificación, edición, PWA offline y fuente original.",
+    "Callejero oficial versionado y actualización manual reproducible."
   ],
   changes: [
-    "Corrige definitivamente la consulta a Nominatim usando el endpoint HTTP real, sin llamadas recursivas.",
-    "La función de Nominatim tiene tipos explícitos y caché/rate limit seguros para el build de Next.js.",
-    "El paquete se entrega con una única raíz de proyecto, sin carpetas de proyecto duplicadas.",
-    "La configuración de Vercel ignora una carpeta legacy manifiestoruta/ si quedara accidentalmente en el repositorio.",
-    "El build de producción ya no depende de descargar el callejero durante npm run build; el catálogo queda versionado y su actualización es manual con npm run refresh:streets.",
-    "Service Worker actualizado a v20 para forzar la renovación limpia de la PWA.",
-    "Conserva la ruta única para todas las ciudades, normalización canónica de localidades y mejoras PWA de v2.4.0.",
-  ],
-};
+    "Añade tema oscuro persistente con botón de sol en tema claro y luna en tema oscuro.",
+    "Añade Agustina, Tiburcio (Fortín Tiburcio), Arenales, Arribeños y Teodelina; conserva Junín, Ascensión y Ferré y las localidades anteriores.",
+    "Restaura Teodelina a su jurisdicción correcta: Santa Fe / General López, anulando la corrección territorial errónea de la versión anterior.",
+    "El actualizador descarga el listado completo de calles de cada localidad soportada y conserva altura mínima/máxima, rangos por lado, nomenclatura, categoría, jurisdicción, fuente y centro geométrico cuando está disponible.",
+    "OCR marca para revisión las alturas que quedan fuera del rango oficial de una calle.",
+    "La exportación de callejeros incluye provincia, rangos por lado, fuente y coordenadas de referencia.",
+    "Service Worker v23 fuerza la actualización limpia de la PWA."
+  ]
+} as ReleaseInfo;

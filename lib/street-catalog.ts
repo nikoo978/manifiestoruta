@@ -5,11 +5,22 @@ export type StreetRecord = {
   id: string;
   name: string;
   category: string;
+  nomenclature?: string;
+  province?: string;
+  provinceId?: string;
   department: string;
+  departmentId?: string;
   locality: string;
   localityId: string;
+  source?: string;
   from: number;
   to: number;
+  rightFrom?: number;
+  rightTo?: number;
+  leftFrom?: number;
+  leftTo?: number;
+  centerLat?: number;
+  centerLon?: number;
 };
 
 const RECORDS = recordsJson as StreetRecord[];
@@ -23,6 +34,10 @@ export type AddressAnalysis = {
   correctedAddress: string;
   corrections: Array<{ original: string; corrected: string; score: number }>;
   catalogMatched: boolean;
+  heightRange?: { from: number; to: number };
+  heightPlausible?: boolean;
+  heightParity?: "odd" | "even" | "both" | "unknown";
+  streetCenter?: { lat: number; lon: number };
 };
 
 const MANUAL_ALIASES: Record<string, string> = {
@@ -106,7 +121,9 @@ function similarity(a: string, b: string) {
 export function streetsForLocation(locationKey: string) {
   const loc = locationByKey(locationKey);
   const catalogLocality = loc.georefLocality ?? loc.locality;
-  const rows = RECORDS.filter((r) => r.department === loc.department && (!catalogLocality || normalizeText(r.locality) === normalizeText(catalogLocality)));
+  const rows = RECORDS.filter((r) => (!r.province || normalizeText(r.province) === normalizeText(loc.province))
+    && normalizeText(r.department) === normalizeText(loc.department)
+    && (!catalogLocality || normalizeText(r.locality) === normalizeText(catalogLocality)));
   const byName = new Map<string, StreetRecord>();
   for (const row of rows) {
     const key = `${row.locality}|${row.name}`;
@@ -177,7 +194,30 @@ export function analyzeCatalogAddress(input: string, locationKey: string): Addre
     return ref;
   });
   const correctedAddress = `${mainStreet}${height ? ` ${height}` : ""}${correctedRefs.length === 2 ? ` entre ${correctedRefs[0]} y ${correctedRefs[1]}` : ""}`.trim();
-  return { input, streetInput, mainStreet, height, between: correctedRefs, correctedAddress, corrections, catalogMatched: matched };
+  const streetRecord = mainMatch?.street;
+  const heightRange = streetRecord && (streetRecord.from > 0 || streetRecord.to > 0)
+    ? {
+        from: streetRecord.from > 0 ? streetRecord.from : streetRecord.to,
+        to: streetRecord.to > 0 ? streetRecord.to : streetRecord.from,
+      }
+    : undefined;
+  const heightPlausible = height !== undefined && heightRange
+    ? height >= heightRange.from && height <= heightRange.to
+    : undefined;
+  let heightParity: AddressAnalysis["heightParity"] = "unknown";
+  if (streetRecord && height) {
+    const odd = height % 2 === 1;
+    const rightHas = Number.isFinite(streetRecord.rightFrom) && Number.isFinite(streetRecord.rightTo)
+      && height >= (streetRecord.rightFrom ?? 0) && height <= (streetRecord.rightTo ?? 0);
+    const leftHas = Number.isFinite(streetRecord.leftFrom) && Number.isFinite(streetRecord.leftTo)
+      && height >= (streetRecord.leftFrom ?? 0) && height <= (streetRecord.leftTo ?? 0);
+    if (rightHas && leftHas) heightParity = "both";
+    else if (rightHas || leftHas) heightParity = odd ? "odd" : "even";
+  }
+  const streetCenter = streetRecord && Number.isFinite(streetRecord.centerLat) && Number.isFinite(streetRecord.centerLon)
+    ? { lat: Number(streetRecord.centerLat), lon: Number(streetRecord.centerLon) }
+    : undefined;
+  return { input, streetInput, mainStreet, height, between: correctedRefs, correctedAddress, corrections, catalogMatched: matched, heightRange, heightPlausible, heightParity, streetCenter };
 }
 
 export function allStreetRecords() { return RECORDS; }

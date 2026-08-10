@@ -7,6 +7,53 @@ interface InstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
+
+
+type AppTheme = "light" | "dark";
+const THEME_KEY = "ruta-envios-theme";
+
+function preferredTheme(): AppTheme {
+  const saved = window.localStorage.getItem(THEME_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme: AppTheme) {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  meta?.setAttribute("content", theme === "dark" ? "#101713" : "#17663d");
+}
+
+export function ThemeToggle() {
+  const [theme, setTheme] = useState<AppTheme>("light");
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const current = preferredTheme();
+    setTheme(current);
+    applyTheme(current);
+    setReady(true);
+  }, []);
+
+  function toggle() {
+    const next: AppTheme = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    window.localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  }
+
+  return <button
+    type="button"
+    className="theme-toggle icon-action"
+    onClick={toggle}
+    aria-label={theme === "dark" ? "Usar tema claro" : "Usar tema oscuro"}
+    title={theme === "dark" ? "Tema oscuro · cambiar a claro" : "Tema claro · cambiar a oscuro"}
+  >
+    <span className="theme-icon" aria-hidden="true">{ready && theme === "dark" ? "☾" : "☀"}</span>
+  </button>;
+}
+
 export function InstallPwa() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [isIos, setIsIos] = useState(false);
