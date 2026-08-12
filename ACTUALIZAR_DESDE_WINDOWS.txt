@@ -1,20 +1,13 @@
-Ruta Envios v2.5.3 - actualización limpia del repositorio
+Ruta Envios v2.5.4 - actualización limpia del repositorio
 
-IMPORTANTE
-- El ZIP contiene la RAÍZ del proyecto. No debe quedar dentro de otra carpeta manifiestoruta/ en GitHub.
-- Copiar y reemplazar los archivos directamente en la raíz del clon, donde está el .git.
-- La carpeta .git NO se borra.
+1. Descomprimí este ZIP.
+2. Copiá TODO su contenido a la raíz del repositorio (donde está .git), reemplazando archivos.
+3. Si existe una carpeta anidada vieja llamada manifiestoruta, eliminála.
+4. Ejecutá:
 
-Si en el repositorio existe una carpeta anidada llamada manifiestoruta, eliminarla antes del commit:
-  rmdir /S /Q manifiestoruta
-
-Después de copiar el contenido del ZIP, si querés refrescar el callejero oficial (requiere Internet y Node.js):
-  ACTUALIZAR_CALLEJERO.cmd
-
-Luego ejecutá:
   git status
   git add -A
-  git commit -m "perf: optimize Android PWA and add loading status v2.5.3"
+  git commit -m "feat: lazy map, source picker and deeper OCR v2.5.4"
   git push origin main
 
-Vercel debe compilar desde la raíz y mostrar v2.5.3 / Service Worker v24.
+Vercel debe compilar desde la raíz y mostrar v2.5.4 / Service Worker v25.

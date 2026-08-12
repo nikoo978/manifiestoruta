@@ -7,7 +7,7 @@ import { analyzeCatalogAddress } from "./street-catalog";
 import { validateAddress } from "./georef";
 
 type ImageInput = { bytes: Uint8Array; type: string; name: string };
-type PageRead = { extraction: RawExtraction; disputed: Set<number>; secondReadFailed: boolean };
+type PageRead = { extraction: RawExtraction; disputed: Set<number>; incompleteReads: boolean };
 
 export type OcrMode = "fast" | "maximum";
 export type OcrProgress = {
@@ -94,10 +94,16 @@ function parseJsonExtraction(text: string, page: number): RawExtraction {
   };
 }
 
-async function extractPageAsJsonText(image: ImageInput, page: number, variant: "layout" | "transcription") {
-  const focus = variant === "layout"
-    ? "Hacé una lectura geométrica: delimitá cada banda horizontal antes de transcribir."
-    : "Hacé una lectura independiente carácter por carácter y comprobá la continuidad de la numeración.";
+type ReadVariant = "layout" | "transcription" | "audit";
+
+function variantFocus(variant: ReadVariant) {
+  if (variant === "layout") return "Hacé una lectura geométrica: delimitá cada banda horizontal antes de transcribir.";
+  if (variant === "transcription") return "Hacé una lectura independiente carácter por carácter y comprobá la continuidad de la numeración.";
+  return "Hacé una auditoría independiente desde cero. Verificá fila por fila número, nombre, calle, altura, localidad y CP; prestá especial atención a caracteres parecidos, alturas dudosas y contaminación entre renglones contiguos.";
+}
+
+async function extractPageAsJsonText(image: ImageInput, page: number, variant: ReadVariant) {
+  const focus = variantFocus(variant);
   const { text } = await generateText({
     model: ocrModel(),
     reasoning: variant === "layout" ? "low" : "medium",
@@ -114,11 +120,9 @@ async function extractPageAsJsonText(image: ImageInput, page: number, variant: "
   return parseJsonExtraction(text, page);
 }
 
-async function extractPage(image: ImageInput, page: number, variant: "layout" | "transcription") {
+async function extractPage(image: ImageInput, page: number, variant: ReadVariant) {
   const started = Date.now();
-  const focus = variant === "layout"
-    ? "Hacé una lectura geométrica: delimitá cada banda horizontal antes de transcribir."
-    : "Hacé una lectura independiente carácter por carácter y comprobá la continuidad de la numeración.";
+  const focus = variantFocus(variant);
 
   try {
     // Ruta original: generateText + Output.object. Sin timeout artificial y sin
@@ -160,23 +164,28 @@ function signature(row: RawRow) {
   return [row.rowNumber, fold(row.name), fold(cleanAddress(row.address)), fold(row.locality), row.postalCode].join("|");
 }
 
-function rowMap(read: RawExtraction) {
-  return new Map(read.rows.map((row) => [row.rowNumber, row]));
+function rowMap(read: RawExtraction): Map<number, RawRow> {
+  return new Map<number, RawRow>(read.rows.map((row) => [row.rowNumber, row]));
 }
 
-function findDisputes(first: RawExtraction, second: RawExtraction) {
-  const a = rowMap(first);
-  const b = rowMap(second);
+function findDisputes(reads: RawExtraction[]) {
+  const maps = reads.map(rowMap);
   const disputed = new Set<number>();
-  for (const number of new Set([...a.keys(), ...b.keys()])) {
-    if (!a.has(number) || !b.has(number) || signature(a.get(number)!) !== signature(b.get(number)!)) disputed.add(number);
+  const numbers = new Set<number>(maps.flatMap((map) => [...map.keys()]));
+  for (const number of numbers) {
+    const rows = maps.map((map) => map.get(number));
+    if (rows.some((row) => !row)) { disputed.add(number); continue; }
+    const signatures = new Set(rows.map((row) => signature(row!)));
+    if (signatures.size > 1) disputed.add(number);
   }
   return disputed;
 }
 
-async function adjudicatePage(image: ImageInput, page: number, first: RawExtraction, second: RawExtraction, disputed: Set<number>) {
+async function adjudicatePage(image: ImageInput, page: number, reads: RawExtraction[], disputed: Set<number>) {
   const wanted = [...disputed].sort((a, b) => a - b);
-  const prompt = `Las dos lecturas discreparon sólo en las filas ${wanted.join(", ")}. Inspeccioná la imagen y devolvé ÚNICAMENTE esas filas, con page=${page}. No vuelvas a transcribir las demás.\nLectura A: ${JSON.stringify(first.rows.filter((row) => disputed.has(row.rowNumber)))}\nLectura B: ${JSON.stringify(second.rows.filter((row) => disputed.has(row.rowNumber)))}`;
+  const labels = ["A", "B", "C", "D"];
+  const evidence = reads.map((read, index) => `Lectura ${labels[index] ?? index + 1}: ${JSON.stringify(read.rows.filter((row) => disputed.has(row.rowNumber)))}`).join("\n");
+  const prompt = `Las ${reads.length} lecturas independientes discreparon en las filas ${wanted.join(", ")}. Actuá como auditor final: inspeccioná nuevamente la imagen y devolvé ÚNICAMENTE esas filas, con page=${page}. Priorizá lo visible en la imagen por encima de las propuestas y no vuelvas a transcribir las demás.\n${evidence}`;
   try {
     const { output } = await generateText({
       model: ocrModel(),
@@ -224,61 +233,62 @@ async function readPage(image: ImageInput, page: number, pages: number, mode: Oc
     pages,
   });
 
-  if (mode === "fast") {
-    emit(0.08, "reading", `Leyendo página ${page} de ${pages}…`);
-    const extraction = await extractPage(image, page, "layout");
-    emit(1, "reading", `Página ${page} lista.`);
-    return { extraction, disputed: new Set(), secondReadFailed: false };
-  }
+  // Rápido conserva la calidad del antiguo Intenso: dos lecturas independientes
+  // y conciliación sólo cuando difieren. El nuevo Intenso suma una tercera
+  // auditoría independiente y vuelve a adjudicar cualquier discrepancia.
+  const variants: ReadVariant[] = mode === "fast"
+    ? ["layout", "transcription"]
+    : ["layout", "transcription", "audit"];
+  const label = mode === "fast" ? "doble lectura" : "triple lectura + auditoría";
+  emit(0.06, "reading", `${mode === "fast" ? "Rápido" : "Intenso"}: ${label} de la página ${page} de ${pages}…`);
 
-  // Modo intenso vuelve a ser el del proyecto original: siempre dos lecturas
-  // independientes en paralelo y conciliación si difieren.
-  emit(0.08, "reading", `Primera y segunda lectura de la página ${page} de ${pages}…`);
-  const reads = await Promise.allSettled([
-    extractPage(image, page, "layout"),
-    extractPage(image, page, "transcription"),
-  ]);
+  const reads = await Promise.allSettled(variants.map((variant) => extractPage(image, page, variant)));
   const successful = reads
     .filter((read): read is PromiseFulfilledResult<RawExtraction> => read.status === "fulfilled")
     .map((read) => read.value);
 
   if (!successful.length) {
-    throw reads[0].status === "rejected" ? reads[0].reason : new Error("No se completó ninguna lectura OCR.");
+    const firstFailure = reads.find((read): read is PromiseRejectedResult => read.status === "rejected");
+    throw firstFailure?.reason ?? new Error("No se completó ninguna lectura OCR.");
   }
+
+  const incompleteReads = successful.length < variants.length;
   if (successful.length === 1) {
-    emit(1, "second_read", `Se completó una de las dos lecturas de la página ${page}.`);
+    emit(1, "second_read", `Sólo se completó una lectura de la página ${page}; quedará marcada para revisión.`);
     return {
       extraction: successful[0],
       disputed: new Set(successful[0].rows.map((row) => row.rowNumber)),
-      secondReadFailed: true,
+      incompleteReads: true,
     };
   }
 
-  const [first, second] = successful;
-  emit(0.78, "second_read", `Comparando las dos lecturas de la página ${page}…`);
-  const disputed = findDisputes(first, second);
+  emit(0.74, "second_read", `Comparando ${successful.length} lecturas independientes de la página ${page}…`);
+  const disputed = findDisputes(successful);
+  const base = successful[0];
   if (!disputed.size) {
-    emit(1, "second_read", `Página ${page} confirmada por ambas lecturas.`);
-    return { extraction: first, disputed, secondReadFailed: false };
+    emit(1, "second_read", `Página ${page} confirmada por ${successful.length} lecturas.`);
+    return { extraction: base, disputed, incompleteReads };
   }
 
   try {
-    emit(0.9, "adjudicating", `Resolviendo ${disputed.size} fila${disputed.size === 1 ? "" : "s"} dudosa${disputed.size === 1 ? "" : "s"} de la página ${page}…`);
-    const adjudicated = await adjudicatePage(image, page, first, second, disputed);
-    emit(1, "adjudicating", `Página ${page} revisada.`);
+    emit(0.88, "adjudicating", `Auditando ${disputed.size} fila${disputed.size === 1 ? "" : "s"} dudosa${disputed.size === 1 ? "" : "s"} de la página ${page}…`);
+    const adjudicated = await adjudicatePage(image, page, successful, disputed);
+    emit(1, "adjudicating", `Página ${page} conciliada.`);
     return {
-      extraction: { ...first, rows: mergeAdjudication(first, adjudicated, disputed) },
+      extraction: { ...base, rows: mergeAdjudication(base, adjudicated, disputed) },
       disputed,
-      secondReadFailed: false,
+      incompleteReads,
     };
   } catch (error) {
     console.warn("[ocr] adjudication unavailable; returning first read for review", {
       page,
+      mode,
+      successfulReads: successful.length,
       name: error instanceof Error ? error.name : "UnknownError",
       message: error instanceof Error ? error.message : String(error),
     });
     emit(1, "adjudicating", `Página ${page} lista con filas marcadas para revisión.`);
-    return { extraction: first, disputed, secondReadFailed: false };
+    return { extraction: base, disputed, incompleteReads };
   }
 }
 
@@ -291,7 +301,7 @@ async function mapLimit<T, R>(items: T[], limit: number, work: (item: T, index: 
   return result;
 }
 
-async function verifyRow(row: RawRow, disputed: boolean, secondReadFailed: boolean): Promise<VerifiedRow> {
+async function verifyRow(row: RawRow, disputed: boolean, incompleteReads: boolean): Promise<VerifiedRow> {
   const place = canonicalLocality(row.locality);
   const rawAddress = cleanAddress(row.address);
   const inferred = inferLocation(place?.name ?? row.locality, place?.postalCode ?? row.postalCode);
@@ -300,7 +310,7 @@ async function verifyRow(row: RawRow, disputed: boolean, secondReadFailed: boole
   const geo = await validateAddress(address, place?.name ?? row.locality);
   const uncertainImportant = row.uncertainFields.filter((field) => IMPORTANT_FIELDS.has(field));
   const reasons: string[] = [];
-  if (secondReadFailed) reasons.push("No se completó la segunda lectura");
+  if (incompleteReads) reasons.push("No se completaron todas las lecturas de control");
   else if (disputed) reasons.push("Las lecturas iniciales no coincidieron");
   if (uncertainImportant.length) reasons.push(`Campo dudoso: ${uncertainImportant.join(", ")}`);
   if (!place) reasons.push("Localidad fuera del catálogo");
@@ -327,11 +337,11 @@ async function verifyRow(row: RawRow, disputed: boolean, secondReadFailed: boole
 export async function runOcr(images: ImageInput[], mode: OcrMode, report?: ProgressReporter): Promise<Omit<ScanResult, "persisted">> {
   const started = Date.now();
   report?.({ percent: 5, phase: "starting", message: `Preparando ${images.length} página${images.length === 1 ? "" : "s"} para OCR…`, pages: images.length });
-  const pages = await mapLimit(images, 2, (image, index) => readPage(image, index + 1, images.length, mode, report));
+  const pages = await mapLimit(images, mode === "maximum" ? 1 : 2, (image, index) => readPage(image, index + 1, images.length, mode, report));
   const manifestNumber = pages.map((page) => page.extraction.manifestNumber.trim()).find(Boolean) ?? "";
   report?.({ percent: 86, phase: "verifying", message: "Validando filas, calles y localidades…", pages: images.length });
   const verifiedPages = await Promise.all(pages.map(async (page) => Promise.all(page.extraction.rows.map((row) =>
-    verifyRow(row, page.disputed.has(row.rowNumber), page.secondReadFailed)
+    verifyRow(row, page.disputed.has(row.rowNumber), page.incompleteReads)
   ))));
   const rows = verifiedPages.flat().sort((a, b) => a.page - b.page || a.rowNumber - b.rowNumber);
   report?.({ percent: 96, phase: "verifying", message: `OCR listo: ${rows.length} fila${rows.length === 1 ? "" : "s"} detectada${rows.length === 1 ? "" : "s"}.`, pages: images.length });

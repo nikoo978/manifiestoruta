@@ -1,6 +1,6 @@
 # Ruta Envíos
 
-Versión 2.5.3. Ruta Envíos unifica carga, OCR, geocodificación, mapa y preparación del reparto en una sola PWA.
+Versión 2.5.4. Ruta Envíos unifica carga, OCR, geocodificación, mapa y preparación del reparto en una sola PWA.
 
 ## Carga
 
@@ -71,3 +71,13 @@ El archivo `data/street-catalog.json` es el snapshot versionado que usa el OCR s
 - Menos blur, sombras y transiciones costosas en móvil; tarjetas fuera de pantalla usan `content-visibility`.
 - Visor PDF usa una escala menor en dispositivos de menor potencia, preservando el original.
 - Service Worker `v24`.
+
+
+## v2.5.4
+
+- Mapa plegado y lazy: Leaflet/tiles sólo se cargan cuando hacen falta.
+- Apertura automática del mapa después de ubicar direcciones.
+- Selector de carga: Cámara, Galería, Archivo o Examinar.
+- Campo manual más compacto.
+- OCR Intenso por defecto: triple lectura + auditoría; Rápido = doble lectura + conciliación.
+- Service Worker `v25`.

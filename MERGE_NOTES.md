@@ -72,3 +72,12 @@ No se ejecutó `next build` en el entorno de ensamblado porque su registro npm i
 - UX: indicador global de trabajo para diferenciar procesos largos de una interfaz tildada.
 - CSS móvil reduce efectos GPU costosos y evita pintar tarjetas fuera del viewport.
 - Service Worker v24.
+
+
+## v2.5.4
+
+- Mapa bajo demanda y plegable para reducir consumo en Android.
+- Selector único de fuente (cámara, galería, archivo, examinar).
+- OCR Intenso por defecto con triple lectura + auditoría.
+- Rápido hereda el antiguo Intenso (doble lectura + conciliación).
+- Service Worker v25.

@@ -50,7 +50,7 @@ export async function POST(request: Request) {
   let latestProgress: OcrProgress = {
     percent: 2,
     phase: "starting",
-    message: mode === "fast" ? "Iniciando análisis rápido…" : "Iniciando análisis intenso…",
+    message: mode === "fast" ? "Iniciando análisis rápido: doble lectura + conciliación…" : "Iniciando análisis intenso: triple lectura + auditoría…",
     pages: images.length,
   };
 

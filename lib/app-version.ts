@@ -1,5 +1,5 @@
-export const APP_VERSION = "2.5.3";
-export const SERVICE_WORKER_VERSION = "v24";
+export const APP_VERSION = "2.5.4";
+export const SERVICE_WORKER_VERSION = "v25";
 
 export type ReleaseInfo = {
   version: string;
@@ -13,22 +13,21 @@ export type ReleaseInfo = {
 export const CURRENT_RELEASE: ReleaseInfo = {
   version: APP_VERSION,
   serviceWorker: SERVICE_WORKER_VERSION,
-  title: "PWA Android más fluida con carga visible",
-  releasedAt: "2026-08-10",
+  title: "Mapa bajo demanda y OCR más profundo",
+  releasedAt: "2026-08-11",
   previousFeatures: [
-    "Tema claro/oscuro persistente y PWA offline.",
-    "OCR Rápido e Intenso con progreso visible.",
+    "Tema claro/oscuro persistente y PWA optimizada para Android.",
+    "Indicador global de trabajo con progreso visible.",
     "Ruta unificada, callejero enriquecido y geocodificación multi-localidad.",
     "Fuente original por parada y edición manual de direcciones/coordenadas."
   ],
   changes: [
-    "Mantiene Leaflet montado y actualiza sólo las capas de ruta, evitando recargar mapa y mosaicos ante cambios de estado.",
-    "Difiere la persistencia en localStorage al tiempo ocioso para evitar bloqueos del hilo principal.",
-    "Evita recalcular la optimización O(n²) cuando sólo cambia el estado, nombre o notas de una parada.",
-    "Reduce trabajo de análisis visual de imágenes en Android y cede periódicamente el hilo principal durante el postprocesado OCR.",
-    "Añade un indicador global de trabajo con spinner, etapa y porcentaje para OCR, PDF, geocodificación, GPS y carga inicial.",
-    "Reduce blur, sombras y transiciones costosas en pantallas móviles y omite pintura/layout de tarjetas fuera del viewport.",
-    "Reduce la resolución de render del visor PDF en dispositivos de menor potencia sin modificar el archivo original.",
-    "Service Worker v24 fuerza la actualización de los recursos PWA."
+    "El mapa inicia plegado y no carga Leaflet ni mosaicos hasta que existe al menos una dirección ubicada o el usuario lo despliega.",
+    "Después de geocodificar una dirección correctamente, el mapa se despliega automáticamente; al plegarlo se desmonta y libera recursos.",
+    "Simplifica el campo manual a un ejemplo único y compacto.",
+    "El área de carga abre un selector con Cámara, Galería, Archivo y Examinar, eliminando botones redundantes de PDF/Imágenes.",
+    "Intenso queda seleccionado por defecto y realiza triple lectura independiente más auditoría/conciliación.",
+    "Rápido adopta la doble lectura más conciliación que utilizaba el antiguo modo Intenso.",
+    "Service Worker v25 fuerza la actualización de la PWA."
   ]
 } as ReleaseInfo;

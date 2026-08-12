@@ -570,8 +570,10 @@ import { APP_VERSION } from "@/lib/app-version";
  }
 
  export default function RutaPostalHome() {
-  const imagePicker = useRef<HTMLInputElement>(null);
-  const universalPicker = useRef<HTMLInputElement>(null);
+  const cameraPicker = useRef<HTMLInputElement>(null);
+  const galleryPicker = useRef<HTMLInputElement>(null);
+  const documentPicker = useRef<HTMLInputElement>(null);
+  const browsePicker = useRef<HTMLInputElement>(null);
   const [stops, setStops] = useState<Stop[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [text, setText] = useState("");
@@ -579,7 +581,7 @@ import { APP_VERSION } from "@/lib/app-version";
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [activity, setActivity] = useState<ActivityState | null>(null);
-  const [ocrMode, setOcrMode] = useState<OcrModeChoice>("fast");
+  const [ocrMode, setOcrMode] = useState<OcrModeChoice>("intense");
   const [ocrProgress, setOcrProgress] = useState<OcrProgressState | null>(null);
   const [origin, setOrigin] = useState<{ lat: number; lon: number }>();
   const [activeLocationKey, setActiveLocationKey] = useState(ALL_LOCATIONS_KEY);
@@ -590,6 +592,8 @@ import { APP_VERSION } from "@/lib/app-version";
   const [editAddress, setEditAddress] = useState("");
   const [editLocationKey, setEditLocationKey] = useState("junin-6000");
   const [sourceStopId, setSourceStopId] = useState<string | null>(null);
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -652,11 +656,13 @@ import { APP_VERSION } from "@/lib/app-version";
       setActivity({ title: "Ubicando direcciones", detail: "Validando calles y coordenadas…", percent: 82 });
       const data = await response.json() as { results: GeoResult[] };
       const byId = new Map(pending.map((stop, index) => [stop.id, data.results[index]]));
+      const locatedAny = data.results.some((geo) => Number.isFinite(geo?.lat) && Number.isFinite(geo?.lon));
       setStops((previous) => previous.map((stop) => {
         const geo = byId.get(stop.id);
         return geo ? { ...stop, address: geo.normalizedAddress || stop.address, lat: geo.lat, lon: geo.lon, precision: geo.precision, reason: geo.reason, corrections: geo.corrections } : stop;
       }));
-      setActivity({ title: "Ubicando direcciones", detail: "Ordenando la ruta y actualizando el mapa…", percent: 96 });
+      setActivity({ title: "Ubicando direcciones", detail: locatedAny ? "Ordenando la ruta y habilitando el mapa…" : "Finalizando validación de direcciones…", percent: 96 });
+      if (locatedAny) setMapOpen(true);
       await yieldToMainThread();
       setMessage(locationCount === 1 ? `${locationByKey(pending[0].locationKey).label}: ubicación terminada.` : `${locationCount} ciudades unificadas: ubicación terminada.`);
     } catch (error) {
@@ -906,8 +912,8 @@ import { APP_VERSION } from "@/lib/app-version";
     setActivity({ title: "Procesando imágenes", detail: "Preparando archivos para OCR…", percent: 2 });
     setOcrProgress({ percent: 2, label: "Preparando imágenes originales…", elapsedMs: 0, mode: ocrMode });
     setMessage(ocrMode === "fast"
-      ? `Análisis rápido: leyendo ${images.length} imagen${images.length === 1 ? "" : "es"}…`
-      : `Análisis intenso: revisando ${images.length} imagen${images.length === 1 ? "" : "es"} con comprobaciones adicionales…`);
+      ? `Análisis rápido: doble lectura y conciliación de ${images.length} imagen${images.length === 1 ? "" : "es"}…`
+      : `Análisis intenso: triple lectura, auditoría y conciliación de ${images.length} imagen${images.length === 1 ? "" : "es"}…`);
     try {
       setOcrProgress({ percent: 4, label: "Enviando imágenes originales al OCR…", elapsedMs: 0, mode: ocrMode });
       setActivity({ title: "Procesando imágenes", detail: "Enviando originales al OCR…", percent: 4 });
@@ -975,7 +981,6 @@ import { APP_VERSION } from "@/lib/app-version";
       setBusy(false);
       setActivity(null);
       window.setTimeout(() => setOcrProgress(null), 1200);
-      if (imagePicker.current) imagePicker.current.value = "";
     }
   }
 
@@ -1035,6 +1040,8 @@ import { APP_VERSION } from "@/lib/app-version";
     if (!stops.length || confirm("¿Borrar todos los envíos y mapas?")) {
       setStops([]);
       setActiveLocationKey(ALL_LOCATIONS_KEY);
+      setMapOpen(false);
+      setFilePickerOpen(false);
       setMessage("");
       void clearSourceFiles().catch(() => undefined);
     }
@@ -1061,6 +1068,7 @@ import { APP_VERSION } from "@/lib/app-version";
     } : stop));
     setCoordinateStopId(null);
     setCoordinateText("");
+    setMapOpen(true);
     setMessage("Coordenadas guardadas.");
   }
 
@@ -1167,7 +1175,7 @@ import { APP_VERSION } from "@/lib/app-version";
           </select>
         </div>
 
-        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={'Rivadavia 40 Junín\nSalta 32 Junín\nArias entre Cabrera y Quintana Junín'} />
+        <textarea className="manual-address-input" rows={2} value={text} onChange={(event) => setText(event.target.value)} placeholder="Escriba dirección, ejemplo: Calle Falsa 123, localidad" />
         <button className="primary manual-submit" disabled={busy || !text.trim()} onClick={addManual}>Ubicar direcciones</button>
 
         <div className="separator"><span>o</span></div>
@@ -1178,28 +1186,28 @@ import { APP_VERSION } from "@/lib/app-version";
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDragging(true); }}
           onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
           onDrop={(event) => { event.preventDefault(); setDragging(false); void importFiles(Array.from(event.dataTransfer.files)); }}
-          onClick={() => !busy && universalPicker.current?.click()}
+          onClick={() => !busy && setFilePickerOpen(true)}
           role="button"
           tabIndex={0}
-          onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !busy) universalPicker.current?.click(); }}
+          aria-haspopup="dialog"
+          onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !busy) setFilePickerOpen(true); }}
         >
           <span className="drop-icon" aria-hidden="true">＋</span>
-          <strong>PDF o imágenes</strong>
+          <strong>Cargar PDF o imagen</strong>
+          <small>Tocá para elegir cámara, galería, archivo o examinar</small>
         </div>
-        <input ref={universalPicker} type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => { void importFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
+        <input ref={cameraPicker} type="file" accept="image/*" capture="environment" hidden onChange={(event) => { setFilePickerOpen(false); void importImages(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
+        <input ref={galleryPicker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => { setFilePickerOpen(false); void importImages(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
+        <input ref={documentPicker} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => { setFilePickerOpen(false); void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+        <input ref={browsePicker} type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => { setFilePickerOpen(false); void importFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
 
         <div className="ocr-mode-row" aria-label="Modo de análisis OCR">
           <span>Análisis OCR</span>
           <div className="ocr-mode-toggle" role="group" aria-label="Intensidad del OCR">
-            <button type="button" className={ocrMode === "fast" ? "active" : ""} disabled={busy} onClick={() => setOcrMode("fast")}>Rápido</button>
             <button type="button" className={ocrMode === "intense" ? "active" : ""} disabled={busy} onClick={() => setOcrMode("intense")}>Intenso</button>
+            <button type="button" className={ocrMode === "fast" ? "active" : ""} disabled={busy} onClick={() => setOcrMode("fast")}>Rápido</button>
           </div>
-        </div>
-
-        <div className="file-actions">
-          <label className="secondary-action">PDF<input type="file" accept="application/pdf" hidden disabled={busy} onChange={(event) => { void importPdf(event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>
-          <button className="secondary-action" type="button" disabled={busy} onClick={() => imagePicker.current?.click()}>Imágenes</button>
-          <input ref={imagePicker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
+          <small className="ocr-mode-help">{ocrMode === "intense" ? "Triple lectura independiente + auditoría y conciliación." : "Doble lectura + conciliación (equivale al Intenso anterior)."}</small>
         </div>
         {ocrProgress && <div className="ocr-progress" aria-live="polite" aria-busy={busy}>
           <div className="ocr-progress-head"><span><b>{ocrProgress.mode === "fast" ? "Rápido" : "Intenso"}</b> · {ocrProgress.label}</span><strong>{Math.round(ocrProgress.percent)}%</strong></div>
@@ -1209,15 +1217,23 @@ import { APP_VERSION } from "@/lib/app-version";
         {message && <p className="message" aria-live="polite">{message}</p>}
       </section>
 
-      <section className="panel map-panel" id="mapa">
-        <div className="map-toolbar">
-          <h2>{showingAllLocations ? "Todas las ciudades" : activeGroup ? activeGroup.location.label : "Mapa"}</h2>
-          <div className="map-meta">
+      <section className={`panel map-panel lazy-map-panel ${mapOpen ? "open" : "collapsed"}`} id="mapa">
+        <button
+          className="map-disclosure"
+          type="button"
+          aria-expanded={mapOpen}
+          aria-controls="route-map-body"
+          disabled={!activeMapped.length && !mapOpen}
+          onClick={() => setMapOpen((open) => !open)}
+        >
+          <span className="map-disclosure-title"><b>{showingAllLocations ? "Todas las ciudades" : activeGroup ? activeGroup.location.label : "Mapa"}</b><small>{activeMapped.length ? (mapOpen ? "Plegar mapa y liberar recursos" : "Desplegar mapa") : "Se habilita al ubicar una dirección"}</small></span>
+          <span className="map-meta">
             <span><b>{activeMapped.length}</b> ubicadas</span>
             <span><b>{activeMissing.length}</b> pendientes</span>
-          </div>
-        </div>
-        <MapView stops={optimized} origin={origin} />
+          </span>
+          <span className={`map-chevron ${mapOpen ? "open" : ""}`} aria-hidden="true">⌄</span>
+        </button>
+        {mapOpen && activeMapped.length > 0 && <div className="lazy-map-body" id="route-map-body"><MapView stops={optimized} origin={origin} /></div>}
       </section>
     </section>
 
@@ -1267,6 +1283,21 @@ import { APP_VERSION } from "@/lib/app-version";
         {!display.length && <div className="empty-state"><span aria-hidden="true">⌖</span><b>Sin paradas</b></div>}
       </div>
     </section>
+
+    {filePickerOpen && <div className="file-picker-backdrop" role="presentation" onClick={() => setFilePickerOpen(false)}>
+      <section className="file-picker-sheet" role="dialog" aria-modal="true" aria-labelledby="file-picker-title" onClick={(event) => event.stopPropagation()}>
+        <span className="sheet-handle" aria-hidden="true" />
+        <button className="sheet-close" type="button" aria-label="Cerrar" onClick={() => setFilePickerOpen(false)}>×</button>
+        <small>Cargar manifiesto</small>
+        <h2 id="file-picker-title">¿Desde dónde querés cargar?</h2>
+        <div className="file-picker-grid">
+          <button type="button" onClick={() => cameraPicker.current?.click()}><span aria-hidden="true">◉</span><b>Cámara</b><small>Tomar una foto ahora</small></button>
+          <button type="button" onClick={() => galleryPicker.current?.click()}><span aria-hidden="true">▧</span><b>Galería</b><small>Elegir una o varias fotos</small></button>
+          <button type="button" onClick={() => documentPicker.current?.click()}><span aria-hidden="true">▤</span><b>Archivo</b><small>Seleccionar un PDF</small></button>
+          <button type="button" onClick={() => browsePicker.current?.click()}><span aria-hidden="true">…</span><b>Examinar</b><small>Buscar PDF o imágenes</small></button>
+        </div>
+      </section>
+    </div>}
 
     {editStopId && <div className="coordinate-backdrop" role="presentation" onClick={() => setEditStopId(null)}>
       <section className="coordinate-sheet edit-address-sheet" role="dialog" aria-modal="true" aria-labelledby="edit-address-title" onClick={(event) => event.stopPropagation()}>
