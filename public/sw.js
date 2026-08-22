@@ -1,4 +1,4 @@
-const VERSION = "v25";
+const VERSION = "v26";
 const SHELL_CACHE = `ruta-envios-shell-${VERSION}`;
 const RUNTIME_CACHE = `ruta-envios-runtime-${VERSION}`;
 const APP_CACHES = [SHELL_CACHE, RUNTIME_CACHE];

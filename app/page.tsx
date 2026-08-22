@@ -15,6 +15,7 @@ import {
   type RouteTransferPayload,
 } from "@/lib/route-transfer";
 import { APP_VERSION } from "@/lib/app-version";
+import { GoogleRouteMap } from "./google-route-map";
 
  type Status = "pending" | "delivered" | "failed";
  type Precision = "exact" | "manual" | "parallel" | "street" | "missing";
@@ -289,6 +290,17 @@ import { APP_VERSION } from "@/lib/app-version";
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
  }
 
+ function googleMapsDirections(stop: Stop) {
+  if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) return googleMapsSearch(stop);
+  const parameters = new URLSearchParams({
+    api: "1",
+    destination: `${stop.lat},${stop.lon}`,
+    travelmode: "driving",
+    dir_action: "navigate",
+  });
+  return `https://www.google.com/maps/dir/?${parameters.toString()}`;
+ }
+
  async function readOcrResponse(response: Response, mode: OcrModeChoice, onProgress: (progress: OcrProgressState) => void) {
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok && contentType.includes("application/json")) {
@@ -335,124 +347,8 @@ import { APP_VERSION } from "@/lib/app-version";
   return result;
  }
 
- function escapePopup(value: string | number) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[char] ?? char));
- }
-
  function yieldToMainThread() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
- }
-
- function MapView({ stops, origin }: { stops: Stop[]; origin?: { lat: number; lon: number } }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
-  const leafletRef = useRef<any>(null);
-  const routeLayerRef = useRef<any>(null);
-  const latestDataRef = useRef({ stops, origin });
-  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
-  const geometrySignature = stops.map((stop) => `${stop.id}:${stop.lat ?? ""}:${stop.lon ?? ""}:${stop.precision ?? ""}:${stop.address}:${stop.name}:${stop.packageNo}`).join("|");
-  const originSignature = origin ? `${origin.lat}:${origin.lon}` : "";
-
-  function drawRoute() {
-    const L = leafletRef.current;
-    const map = mapRef.current;
-    if (!L || !map) return;
-    routeLayerRef.current?.remove();
-    const layer = L.layerGroup().addTo(map);
-    routeLayerRef.current = layer;
-    const points: [number, number][] = [];
-    const data = latestDataRef.current;
-
-    data.stops.forEach((stop, index) => {
-      if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) return;
-      const approximate = stop.precision !== "exact" && stop.precision !== "manual";
-      const icon = L.divIcon({
-        className: "route-marker-wrap",
-        html: `<div class="route-marker ${approximate ? "approx" : ""}"><span>${index + 1}</span></div>`,
-        iconSize: [34, 34], iconAnchor: [17, 17],
-      });
-      L.marker([stop.lat!, stop.lon!], { icon }).addTo(layer).bindPopup(
-        `<strong>${index + 1}. ${escapePopup(stop.address)}</strong><br>${escapePopup(stop.name || "Sin nombre")}<br>Paquete ${escapePopup(stop.packageNo)}`,
-      );
-      points.push([stop.lat!, stop.lon!]);
-    });
-    if (data.origin) {
-      L.circleMarker([data.origin.lat, data.origin.lon], { radius: 8 }).addTo(layer).bindPopup("Inicio");
-      points.push([data.origin.lat, data.origin.lon]);
-    }
-    const mapped = data.stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
-    if (mapped.length > 1) {
-      L.polyline(mapped.map((stop) => [stop.lat!, stop.lon!] as [number, number]), { weight: 4, opacity: 0.6 }).addTo(layer);
-    }
-    if (points.length) map.fitBounds(points, { padding: [28, 28], maxZoom: 15, animate: false });
-    else map.setView([-34.59, -60.95], 12, { animate: false });
-  }
-
-  useEffect(() => {
-    latestDataRef.current = { stops, origin };
-    if (!mapRef.current) return;
-    const frame = window.requestAnimationFrame(drawRoute);
-    return () => window.cancelAnimationFrame(frame);
-    // La firma contiene exactamente los datos geométricos que dibuja el mapa.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometrySignature, originSignature]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        if (!ref.current) return;
-        if (!document.querySelector("link[data-leaflet-css]")) {
-          const link = document.createElement("link");
-          link.rel = "stylesheet";
-          link.href = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
-          link.dataset.leafletCss = "true";
-          document.head.appendChild(link);
-        }
-        const importExternal = new Function("url", "return import(url)") as (url: string) => Promise<any>;
-        const L = await importExternal("https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet-src.esm.js");
-        if (cancelled || !ref.current) return;
-        const lowPower = window.matchMedia("(max-width: 820px)").matches || (navigator.hardwareConcurrency || 8) <= 4;
-        leafletRef.current = L;
-        mapRef.current = L.map(ref.current, {
-          zoomControl: true,
-          preferCanvas: true,
-          zoomAnimation: !lowPower,
-          fadeAnimation: false,
-          markerZoomAnimation: !lowPower,
-        });
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "&copy; OpenStreetMap contributors",
-          maxZoom: 19,
-          updateWhenIdle: true,
-          updateWhenZooming: false,
-          keepBuffer: lowPower ? 1 : 2,
-        }).addTo(mapRef.current);
-        drawRoute();
-        setPhase("ready");
-      } catch {
-        if (!cancelled) setPhase("error");
-      }
-    })();
-    return () => {
-      cancelled = true;
-      routeLayerRef.current?.remove();
-      mapRef.current?.remove();
-      routeLayerRef.current = null;
-      mapRef.current = null;
-      leafletRef.current = null;
-    };
-    // El mapa base se crea una sola vez; las paradas se actualizan en el efecto anterior.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return <div className="map-shell">
-    <div className="map" ref={ref} />
-    {phase === "loading" && <div className="map-loading" role="status"><i/><span>Cargando mapa…</span></div>}
-    {phase === "error" && <div className="map-loading error" role="status"><span>No se pudo cargar el mapa. La lista de paradas sigue disponible.</span></div>}
-  </div>;
  }
 
 
@@ -1096,6 +992,8 @@ import { APP_VERSION } from "@/lib/app-version";
   const activeStops = showingAllLocations ? stops : activeGroup?.rows ?? [];
   const activeMapped = activeStops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon));
   const activeMissing = activeStops.filter((stop) => !Number.isFinite(stop.lat) || !Number.isFinite(stop.lon));
+  const deliveredCount = stops.filter((stop) => stop.status === "delivered").length;
+  const locatedCount = stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lon)).length;
   const routeGeometrySignature = activeStops.map((stop) => `${stop.id}:${stop.lat ?? ""}:${stop.lon ?? ""}`).join("|");
   const optimizedIds = useMemo(() => optimize(activeStops, origin).map((stop) => stop.id),
     // La firma evita recalcular el algoritmo O(n²) al cambiar sólo estado/nombre/notas.
@@ -1150,10 +1048,12 @@ import { APP_VERSION } from "@/lib/app-version";
     </div>}
     <nav className="app-bar" aria-label="Ruta Envíos">
       <div className="brand-lockup">
-        <span className="brand-mark" aria-hidden="true">R</span>
+        <span className="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M8 6.5h7.4c5.1 0 8.2 2.7 8.2 7 0 3-1.6 5.2-4.5 6.3L25 26h-6.3l-5.2-5.6v5.6H8V6.5Zm5.5 4.8v4.6h2.1c1.7 0 2.6-.8 2.6-2.3 0-1.5-.9-2.3-2.6-2.3h-2.1Z"/></svg>
+        </span>
         <span className="brand-copy">
           <strong>Ruta Envíos</strong>
-          <small className="app-version">v{APP_VERSION}</small>
+          <small className="app-version"><i /> Operaciones · v{APP_VERSION}</small>
         </span>
       </div>
       <div className="top-actions">
@@ -1163,6 +1063,19 @@ import { APP_VERSION } from "@/lib/app-version";
         <button className="clear-action" type="button" disabled={!stops.length} onClick={clearAll}>Limpiar</button>
       </div>
     </nav>
+
+    <section className="route-overview" aria-label="Resumen operativo">
+      <div className="overview-copy">
+        <small>PLANIFICADOR DE REPARTO</small>
+        <strong>{stops.length ? `${stops.length} ${stops.length === 1 ? "entrega preparada" : "entregas preparadas"}` : "Tu jornada, ordenada de punta a punta"}</strong>
+        <span>{stops.length ? `${localityGroups.length || 1} ${localityGroups.length === 1 ? "localidad" : "localidades"} · ruta guardada en este dispositivo` : "Importá un manifiesto, verificá las direcciones y salí a repartir."}</span>
+      </div>
+      <div className="overview-metrics">
+        <span><i className="metric-dot ready" /><b>{locatedCount}</b><small>ubicadas</small></span>
+        <span><i className="metric-dot pending" /><b>{Math.max(0, stops.length - locatedCount)}</b><small>por revisar</small></span>
+        <span><i className="metric-dot done" /><b>{deliveredCount}</b><small>entregadas</small></span>
+      </div>
+    </section>
 
     <section className="workspace">
       <section className="panel input-panel" id="cargar">
@@ -1226,14 +1139,18 @@ import { APP_VERSION } from "@/lib/app-version";
           disabled={!activeMapped.length && !mapOpen}
           onClick={() => setMapOpen((open) => !open)}
         >
-          <span className="map-disclosure-title"><b>{showingAllLocations ? "Todas las ciudades" : activeGroup ? activeGroup.location.label : "Mapa"}</b><small>{activeMapped.length ? (mapOpen ? "Plegar mapa y liberar recursos" : "Desplegar mapa") : "Se habilita al ubicar una dirección"}</small></span>
+          <span className="map-disclosure-title">
+            <small className="map-provider-badge"><i aria-hidden="true">G</i> GOOGLE MAPS</small>
+            <b>{showingAllLocations ? "Todas las ciudades" : activeGroup ? activeGroup.location.label : "Mapa de recorrido"}</b>
+            <small>{activeMapped.length ? (mapOpen ? "Ruta interactiva abierta" : "Tocá para ver la ruta por calles") : "Se habilita al ubicar una dirección"}</small>
+          </span>
           <span className="map-meta">
             <span><b>{activeMapped.length}</b> ubicadas</span>
             <span><b>{activeMissing.length}</b> pendientes</span>
           </span>
           <span className={`map-chevron ${mapOpen ? "open" : ""}`} aria-hidden="true">⌄</span>
         </button>
-        {mapOpen && activeMapped.length > 0 && <div className="lazy-map-body" id="route-map-body"><MapView stops={optimized} origin={origin} /></div>}
+        {mapOpen && activeMapped.length > 0 && <div className="lazy-map-body" id="route-map-body"><GoogleRouteMap stops={optimized} origin={origin} /></div>}
       </section>
     </section>
 
@@ -1254,7 +1171,7 @@ import { APP_VERSION } from "@/lib/app-version";
 
     <section className="panel route-panel" id="paradas">
       <div className="route-toolbar">
-        <h2>{showingAllLocations ? "Ruta unificada" : activeGroup ? activeGroup.location.label : "Paradas"}</h2>
+        <div className="route-title"><small>HOJA DE RUTA</small><h2>{showingAllLocations ? "Ruta unificada" : activeGroup ? activeGroup.location.label : "Paradas"}</h2></div>
         <div className="route-actions">
           <span>{display.length} paradas</span>
           <button className="secondary-action compact-action" disabled={busy} onClick={() => void exportRoute()}>CSV</button>
@@ -1276,6 +1193,7 @@ import { APP_VERSION } from "@/lib/app-version";
             {(!Number.isFinite(stop.lat) || !Number.isFinite(stop.lon)) && <div className="location-fallback"><button type="button" disabled={busy} onClick={() => void geocode([stop])}>Reintentar</button><button type="button" onClick={() => openAddressEditor(stop)}>Corregir dirección</button><a href={googleMapsSearch(stop)} target="_blank" rel="noreferrer">Google Maps</a><button type="button" onClick={() => openCoordinateEditor(stop)}>Pegar coordenadas</button></div>}
           </div>
           <div className="stop-controls">
+            <a className="navigate-action" href={googleMapsDirections(stop)} target="_blank" rel="noreferrer" aria-label={`Navegar hasta ${stop.address} con Google Maps`}><span aria-hidden="true">➜</span> Ir</a>
             <select aria-label={`Estado de ${stop.address}`} value={stop.status} onChange={(event) => setStops((previous) => previous.map((item) => item.id === stop.id ? { ...item, status: event.target.value as Status } : item))}><option value="pending">Pendiente</option><option value="delivered">Entregado</option><option value="failed">No entregado</option></select>
             <button type="button" onClick={() => openAddressEditor(stop)}>Editar dirección</button>
           </div>

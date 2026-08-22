@@ -5,7 +5,7 @@ import "./ruta/ruta.css";
 
 export const metadata: Metadata = {
   title: "Ruta Envíos",
-  description: "Planificador de reparto con carga manual, PDF e imágenes.",
+  description: "Planificador profesional de reparto con manifiestos, Google Maps y navegación móvil.",
   applicationName: "Ruta Envíos",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
@@ -27,8 +27,8 @@ export const viewport: Viewport = {
   userScalable: false,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#17663d" },
-    { media: "(prefers-color-scheme: dark)", color: "#101713" },
+    { media: "(prefers-color-scheme: light)", color: "#0b6143" },
+    { media: "(prefers-color-scheme: dark)", color: "#0c1310" },
   ],
 };
 

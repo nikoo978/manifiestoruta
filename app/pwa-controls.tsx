@@ -22,7 +22,7 @@ function applyTheme(theme: AppTheme) {
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
   const meta = document.querySelector('meta[name="theme-color"]');
-  meta?.setAttribute("content", theme === "dark" ? "#101713" : "#17663d");
+  meta?.setAttribute("content", theme === "dark" ? "#0c1310" : "#0b6143");
 }
 
 export function ThemeToggle() {

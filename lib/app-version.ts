@@ -1,5 +1,5 @@
-export const APP_VERSION = "2.5.4";
-export const SERVICE_WORKER_VERSION = "v25";
+export const APP_VERSION = "2.6.0";
+export const SERVICE_WORKER_VERSION = "v26";
 
 export type ReleaseInfo = {
   version: string;
@@ -13,21 +13,21 @@ export type ReleaseInfo = {
 export const CURRENT_RELEASE: ReleaseInfo = {
   version: APP_VERSION,
   serviceWorker: SERVICE_WORKER_VERSION,
-  title: "Mapa bajo demanda y OCR más profundo",
-  releasedAt: "2026-08-11",
+  title: "Google Maps y centro operativo móvil",
+  releasedAt: "2026-08-22",
   previousFeatures: [
-    "Tema claro/oscuro persistente y PWA optimizada para Android.",
+    "Tema claro/oscuro persistente y PWA optimizada para iPhone y Android.",
     "Indicador global de trabajo con progreso visible.",
     "Ruta unificada, callejero enriquecido y geocodificación multi-localidad.",
     "Fuente original por parada y edición manual de direcciones/coordenadas."
   ],
   changes: [
-    "El mapa inicia plegado y no carga Leaflet ni mosaicos hasta que existe al menos una dirección ubicada o el usuario lo despliega.",
-    "Después de geocodificar una dirección correctamente, el mapa se despliega automáticamente; al plegarlo se desmonta y libera recursos.",
-    "Simplifica el campo manual a un ejemplo único y compacto.",
-    "El área de carga abre un selector con Cámara, Galería, Archivo y Examinar, eliminando botones redundantes de PDF/Imágenes.",
-    "Intenso queda seleccionado por defecto y realiza triple lectura independiente más auditoría/conciliación.",
-    "Rápido adopta la doble lectura más conciliación que utilizaba el antiguo modo Intenso.",
-    "Service Worker v25 fuerza la actualización de la PWA."
+    "Reemplaza Leaflet y OpenStreetMap por Google Maps vectorial, cargado sólo al desplegar el mapa.",
+    "Muestra marcadores avanzados numerados, accesibles y con ficha de destinatario.",
+    "Routes API dibuja el recorrido vial y calcula distancia y tiempo; si no está habilitada, conserva una vista estimada.",
+    "Cada entrega incorpora un botón Ir que abre la navegación de Google Maps en el teléfono.",
+    "Renueva toda la interfaz como centro operativo responsive, con resumen de ubicadas, pendientes y entregadas.",
+    "Mantiene la lectura directa de PDF, OCR de imágenes, callejero local y geocodificación gratuita existentes.",
+    "Service Worker v26 fuerza la actualización de la PWA."
   ]
 } as ReleaseInfo;

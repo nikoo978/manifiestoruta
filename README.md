@@ -1,6 +1,6 @@
 # Ruta Envíos
 
-Versión 2.5.4. Ruta Envíos unifica carga, OCR, geocodificación, mapa y preparación del reparto en una sola PWA.
+Versión 2.6.0. Ruta Envíos unifica carga, OCR, geocodificación, Google Maps y preparación del reparto en una sola PWA responsive.
 
 ## Carga
 
@@ -10,11 +10,24 @@ Versión 2.5.4. Ruta Envíos unifica carga, OCR, geocodificación, mapa y prepar
 - Imágenes con OCR automático.
 - Arrastrar y soltar PDF o imágenes.
 
-## Mapa
+## Google Maps
 
-La aplicación intenta ubicar cada parada con Georef Argentina, Photon/OpenStreetMap y los fallbacks de calles/intersecciones. Si una dirección queda pendiente, permite abrirla en Google Maps y pegar coordenadas manuales (`lat, lon` o una URL que las contenga).
+La aplicación intenta ubicar cada parada con Georef Argentina, Photon/OpenStreetMap y los fallbacks de calles/intersecciones gratuitos. La visualización usa Google Maps vectorial, marcadores avanzados numerados y, cuando `Routes API` está habilitada, dibuja el recorrido real por calles con distancia y tiempo estimados. Los manifiestos largos se dividen en tramos de hasta 10 paradas intermedias para mantener las solicitudes en la categoría Essentials.
 
-Todas las localidades pueden optimizarse en una sola ruta y un solo mapa; los chips de localidad funcionan como filtros visuales.
+El mapa se carga únicamente al desplegarlo. Todas las localidades pueden optimizarse en una sola ruta; los chips funcionan como filtros visuales. Cada parada tiene un botón **Ir** que abre Google Maps para navegar. Si una dirección queda pendiente, puede buscarse en Google Maps y corregirse pegando coordenadas (`lat, lon` o una URL que las contenga).
+
+### Configuración segura y de bajo costo
+
+1. En Google Cloud, creá o elegí un proyecto con facturación habilitada.
+2. Habilitá **Maps JavaScript API** y, para el trazado vial, **Routes API**.
+3. Creá una clave de API con restricción de aplicación **Sitios web**.
+4. Permití `https://manifiesto-ocr.vercel.app/*` y `http://localhost:3000/*`. Agregá dominios de Preview sólo si realmente los usás.
+5. Restringí la clave exclusivamente a **Maps JavaScript API** y **Routes API**.
+6. En Vercel agregá `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` en Production, Preview y Development.
+7. Opcional: creá un Map ID de tipo JavaScript y configuralo como `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID`.
+8. Configurá alertas de presupuesto y una cuota diaria conservadora en Google Cloud.
+
+`NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` llega al navegador por diseño. No debe tratarse como un secreto: su protección correcta son las restricciones de dominio y de API. Para desactivar las solicitudes de rutas sin quitar el mapa, usá `NEXT_PUBLIC_GOOGLE_MAPS_ROUTES_ENABLED=false`.
 
 ## PWA
 
@@ -35,6 +48,9 @@ GOOGLE_GENERATIVE_AI_API_KEY=
 AI_GATEWAY_API_KEY=
 SUPABASE_URL=
 SUPABASE_SECRET_KEY=
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
+NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=
+NEXT_PUBLIC_GOOGLE_MAPS_ROUTES_ENABLED=true
 ```
 
 La ruta se persiste en `localStorage` y migra versiones anteriores automáticamente.
@@ -81,3 +97,13 @@ El archivo `data/street-catalog.json` es el snapshot versionado que usa el OCR s
 - Campo manual más compacto.
 - OCR Intenso por defecto: triple lectura + auditoría; Rápido = doble lectura + conciliación.
 - Service Worker `v25`.
+
+## v2.6.0
+
+- Google Maps JavaScript API reemplaza Leaflet/OpenStreetMap como mapa visual.
+- Advanced Markers numerados y accesibles, con destinatario, dirección y navegación.
+- Routes API opcional para recorrido vial, distancia y tiempo estimado; fallback visual si no está habilitada.
+- Carga lazy del mapa para reducir solicitudes y consumo en iPhone.
+- Botón **Ir** por parada con apertura de Google Maps.
+- Nuevo centro operativo responsive, métricas de jornada y acabado visual profesional.
+- Service Worker `v26`.
